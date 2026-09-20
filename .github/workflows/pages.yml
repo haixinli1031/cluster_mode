@@ -1,5 +1,6 @@
 # Deploys the static explorer to GitHub Pages on every push to main.
-# One-time setup: repo Settings → Pages → Source: "GitHub Actions".
+# configure-pages enables Pages (source: GitHub Actions) on first run; if that
+# step is refused, set it once under repo Settings → Pages → Source.
 name: Deploy to GitHub Pages
 
 on:
@@ -39,6 +40,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
