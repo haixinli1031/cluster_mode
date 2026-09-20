@@ -34,12 +34,18 @@ No build step, no server-side code.
 
 - **Workers** slider: 1–10.
 - **Dataset** box: up to 50 integers (negatives allowed), separated by commas
-  or spaces. The run updates as you type.
+  or spaces.
 - **Generate**: *Random* (default, 20 values in 1–9), *Skewed* (every value is
   a multiple of `k`, so worker 0 owns all of them — watch the shuffle-balance
   bars), *Ties* (several values share the top count — watch the tie-breaks).
+  Generators only fill the dataset box.
+- **Run** applies the workers and dataset and recomputes from step 1
+  (Ctrl/Cmd+Enter in the dataset box does the same). Nothing recomputes until
+  you press it: as soon as the controls differ from the run on screen, a
+  banner appears, the stale visualization is dimmed and phase navigation is
+  locked. *Revert* in the banner restores the controls to the current run.
 - Step through the six phases with *Prev / Next*, the phase pills, or the
-  arrow keys. *Run all* jumps to the result.
+  arrow keys. *Skip to result* jumps to the last phase.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
 - **Network** compares this run's traffic to the naive "ship every slice to

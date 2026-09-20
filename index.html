@@ -30,10 +30,14 @@
         <label for="sizeInput">Generate</label>
         <div class="row">
           <input id="sizeInput" type="number" min="1" max="50" value="20" aria-label="Size of generated dataset">
-          <button id="genRandom" type="button" class="primary">Random</button>
+          <button id="genRandom" type="button">Random</button>
           <button id="genSkew" type="button" title="Every value is a multiple of k, so worker 0 owns all of them">Skewed</button>
           <button id="genTies" type="button" title="Several values share the top frequency">Ties</button>
         </div>
+      </div>
+      <div class="control">
+        <label aria-hidden="true">&nbsp;</label>
+        <button id="runBtn" type="button" class="primary run" title="Apply the workers and dataset above and recompute (Ctrl+Enter in the dataset box)">Run ▶</button>
       </div>
     </section>
 
@@ -41,11 +45,18 @@
       <button id="prevBtn" type="button" aria-label="Previous phase">‹ Prev</button>
       <ol id="phaseList" class="phases"></ol>
       <button id="nextBtn" type="button" aria-label="Next phase">Next ›</button>
-      <button id="runAllBtn" type="button" class="primary">Run all</button>
+      <button id="skipBtn" type="button">Skip to result »</button>
     </nav>
 
-    <div class="layout">
-      <section class="card stage" aria-live="polite">
+    <div id="layout" class="layout">
+      <section class="card stage">
+        <div id="staleBanner" class="banner" role="status" hidden>
+          <span id="staleText"></span>
+          <span class="banner-actions">
+            <button id="bannerRun" type="button" class="primary">Run ▶</button>
+            <button id="revertBtn" type="button" class="link">Revert</button>
+          </span>
+        </div>
         <div class="stage-head">
           <h2 id="phaseTitle"></h2>
           <p id="phaseBlurb" class="muted"></p>

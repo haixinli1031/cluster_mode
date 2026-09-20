@@ -51,6 +51,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--page);
@@ -97,6 +98,18 @@ button {
 button:hover { border-color: var(--ink-2); }
 button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+button.run { padding: 6px 18px; font-weight: 600; }
+button.attention { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+button.link { border: 0; background: none; color: var(--accent); text-decoration: underline; padding: 6px 4px; }
+
+/* Stale state: the draft inputs no longer match the rendered run */
+.banner {
+  display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between;
+  background: var(--hilite); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 12px;
+}
+.banner-actions { display: flex; gap: 4px; align-items: center; }
+.stale .stage-head, .stale #stage, .stale .side { opacity: 0.35; pointer-events: none; }
 
 /* Stepper */
 .stepper { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

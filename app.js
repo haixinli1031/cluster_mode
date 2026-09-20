@@ -15,13 +15,14 @@
     { id: 'result', title: 'Result', blurb: 'Worker 0 waits for k−1 MODE_END messages and keeps the highest count, smallest value. That is the global mode.' }
   ];
 
-  var state = { k: 4, data: [], phase: 0, mailboxWorker: 0, run: null };
+  var state = { k: 4, data: [], phase: 0, mailboxWorker: 0, run: null, stale: false };
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     kRange: $('kRange'), kOut: $('kOut'), dataInput: $('dataInput'), dataError: $('dataError'),
     sizeInput: $('sizeInput'), genRandom: $('genRandom'), genSkew: $('genSkew'), genTies: $('genTies'),
-    prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), runAllBtn: $('runAllBtn'), phaseList: $('phaseList'),
+    prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), skipBtn: $('skipBtn'), phaseList: $('phaseList'),
+    runBtn: $('runBtn'), bannerRun: $('bannerRun'), revertBtn: $('revertBtn'), staleBanner: $('staleBanner'), staleText: $('staleText'), layout: $('layout'),
     phaseTitle: $('phaseTitle'), phaseBlurb: $('phaseBlurb'), stage: $('stage'),
     mailboxTabs: $('mailboxTabs'), mailbox: $('mailbox'), netStats: $('netStats')
   };
@@ -308,18 +309,20 @@
     PHASES.forEach(function (p, i) {
       els.phaseList.appendChild(h('li', null, [h('button', {
         type: 'button', 'aria-current': i === state.phase ? 'step' : null,
-        onclick: function () { state.phase = i; render(); }
+        onclick: function () { if (!state.stale) { state.phase = i; render(); } }
       }, [h('span', { class: 'num', text: i + 1 }), p.title])]));
     });
-    els.prevBtn.disabled = state.phase === 0;
-    els.nextBtn.disabled = state.phase === PHASES.length - 1;
-    els.runAllBtn.disabled = state.phase === PHASES.length - 1;
+    updateNav();
 
     renderMailbox();
     renderStats();
   }
 
   // ---- inputs --------------------------------------------------------------
+  // The controls are a draft. Nothing recomputes until Run applies the draft
+  // to `state`; until then the page is marked stale and navigation is locked.
+  var draft = { k: state.k };
+
   function parseData(text) {
     var tokens = text.split(/[\s,;]+/).filter(Boolean);
     if (!tokens.length) throw new Error('Enter at least one integer.');
@@ -332,23 +335,81 @@
     });
   }
 
-  function applyData() {
+  // Parses the dataset box, showing or clearing the inline error. null if invalid.
+  function validateDraft() {
     try {
-      state.data = parseData(els.dataInput.value);
+      var data = parseData(els.dataInput.value);
       els.dataError.hidden = true;
+      return data;
     } catch (err) {
       els.dataError.textContent = err.message;
       els.dataError.hidden = false;
-      return;
+      return null;
     }
-    runCluster();
-    render();
   }
 
-  function setData(arr) {
-    els.dataInput.value = arr.join(', ');
+  function sameData(a, b) {
+    if (a.length !== b.length) return false;
+    for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // How the draft differs from the applied run, or null when it doesn't.
+  function pendingChanges() {
+    var changes = [];
+    if (draft.k !== state.k) changes.push('workers ' + state.k + ' → ' + draft.k);
+    var data = validateDraft();
+    if (data === null) changes.push('dataset invalid');
+    else if (!sameData(data, state.data)) changes.push('dataset edited');
+    return changes.length ? changes : null;
+  }
+
+  function updateStale() {
+    var changes = pendingChanges();
+    state.stale = !!changes;
+    els.staleBanner.hidden = !state.stale;
+    if (state.stale) {
+      els.staleText.textContent = changes.indexOf('dataset invalid') !== -1
+        ? 'Dataset is invalid — fix it, then Run.'
+        : 'Inputs changed — ' + changes.join(', ') + '. Run to recompute from step 1.';
+    }
+    els.layout.classList.toggle('stale', state.stale);
+    els.runBtn.classList.toggle('attention', state.stale);
+    updateNav();
+  }
+
+  function updateNav() {
+    var lock = state.stale;
+    els.prevBtn.disabled = lock || state.phase === 0;
+    els.nextBtn.disabled = lock || state.phase === PHASES.length - 1;
+    els.skipBtn.disabled = lock || state.phase === PHASES.length - 1;
+    Array.prototype.forEach.call(els.phaseList.querySelectorAll('button'), function (b) { b.disabled = lock; });
+  }
+
+  function run() {
+    var data = validateDraft();
+    if (data === null) { els.dataInput.focus(); return; }
+    state.k = draft.k;
+    state.data = data;
     state.phase = 0;
-    applyData();
+    runCluster();
+    render();
+    updateStale();
+  }
+
+  function revert() {
+    draft.k = state.k;
+    els.kRange.value = state.k;
+    els.kOut.value = state.k;
+    els.dataInput.value = state.data.join(', ');
+    updateStale();
+  }
+
+  // Generators only fill the dataset box; the user still has to press Run.
+  function setDraftData(arr) {
+    els.dataInput.value = arr.join(', ');
+    updateStale();
+    els.runBtn.focus();
   }
 
   function size() {
@@ -363,13 +424,13 @@
   function genRandom() {
     var n = size(), out = [];
     for (var i = 0; i < n; i++) out.push(randint(1, 9));
-    setData(out);
+    setDraftData(out);
   }
   // Every value is a multiple of k, so value mod k = 0 and worker 0 owns all of them.
   function genSkew() {
     var n = size(), out = [];
-    for (var i = 0; i < n; i++) out.push(state.k * randint(1, 5));
-    setData(out);
+    for (var i = 0; i < n; i++) out.push(draft.k * randint(1, 5));
+    setDraftData(out);
   }
   // Several distinct values, each repeated the same number of times, shuffled.
   function genTies() {
@@ -378,30 +439,37 @@
     for (var v = 1; v <= distinct; v++) for (var r = 0; r < reps; r++) out.push(v);
     while (out.length < n) out.push(randint(distinct + 1, distinct + 9));
     for (var i = out.length - 1; i > 0; i--) { var j = randint(0, i); var t = out[i]; out[i] = out[j]; out[j] = t; }
-    setData(out);
+    setDraftData(out);
   }
 
   els.kRange.addEventListener('input', function () {
-    state.k = Math.min(MAX_K, Math.max(1, parseInt(els.kRange.value, 10)));
-    els.kOut.value = state.k;
-    if (state.data.length) { runCluster(); render(); }
+    draft.k = Math.min(MAX_K, Math.max(1, parseInt(els.kRange.value, 10)));
+    els.kOut.value = draft.k;
+    updateStale();
   });
-  var debounce;
-  els.dataInput.addEventListener('input', function () { clearTimeout(debounce); debounce = setTimeout(applyData, 250); });
+  els.dataInput.addEventListener('input', updateStale);
+  els.dataInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); }
+  });
+  els.runBtn.addEventListener('click', run);
+  els.bannerRun.addEventListener('click', run);
+  els.revertBtn.addEventListener('click', revert);
   els.genRandom.addEventListener('click', genRandom);
   els.genSkew.addEventListener('click', genSkew);
   els.genTies.addEventListener('click', genTies);
-  els.prevBtn.addEventListener('click', function () { if (state.phase > 0) { state.phase--; render(); } });
-  els.nextBtn.addEventListener('click', function () { if (state.phase < PHASES.length - 1) { state.phase++; render(); } });
-  els.runAllBtn.addEventListener('click', function () { state.phase = PHASES.length - 1; render(); });
+  els.prevBtn.addEventListener('click', function () { if (!state.stale && state.phase > 0) { state.phase--; render(); } });
+  els.nextBtn.addEventListener('click', function () { if (!state.stale && state.phase < PHASES.length - 1) { state.phase++; render(); } });
+  els.skipBtn.addEventListener('click', function () { if (!state.stale) { state.phase = PHASES.length - 1; render(); } });
   document.addEventListener('keydown', function (e) {
-    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || state.stale) return;
     if (e.key === 'ArrowLeft') els.prevBtn.click();
     if (e.key === 'ArrowRight') els.nextBtn.click();
   });
 
-  // Boot: k = 4, a random dataset of DEFAULT_N values.
+  // Boot: k = 4 and a random dataset of DEFAULT_N values, run once so the
+  // page is never empty. After this, every run goes through the Run button.
   els.kRange.value = state.k; els.kOut.value = state.k;
   els.sizeInput.value = DEFAULT_N;
   genRandom();
+  run();
 })();
