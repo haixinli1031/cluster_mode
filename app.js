@@ -409,7 +409,10 @@
   function setDraftData(arr) {
     els.dataInput.value = arr.join(', ');
     updateStale();
-    els.runBtn.focus();
+  }
+  // From a button click, move focus to Run so the next step is obvious.
+  function generateFromClick(gen) {
+    return function () { gen(); els.runBtn.focus(); };
   }
 
   function size() {
@@ -454,9 +457,9 @@
   els.runBtn.addEventListener('click', run);
   els.bannerRun.addEventListener('click', run);
   els.revertBtn.addEventListener('click', revert);
-  els.genRandom.addEventListener('click', genRandom);
-  els.genSkew.addEventListener('click', genSkew);
-  els.genTies.addEventListener('click', genTies);
+  els.genRandom.addEventListener('click', generateFromClick(genRandom));
+  els.genSkew.addEventListener('click', generateFromClick(genSkew));
+  els.genTies.addEventListener('click', generateFromClick(genTies));
   els.prevBtn.addEventListener('click', function () { if (!state.stale && state.phase > 0) { state.phase--; render(); } });
   els.nextBtn.addEventListener('click', function () { if (!state.stale && state.phase < PHASES.length - 1) { state.phase++; render(); } });
   els.skipBtn.addEventListener('click', function () { if (!state.stale) { state.phase = PHASES.length - 1; render(); } });

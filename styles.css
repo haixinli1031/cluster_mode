@@ -137,6 +137,7 @@ textarea::placeholder { color: var(--muted); opacity: 1; }
 
 /* Layout */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.layout > * { min-width: 0; }
 .side .card:first-child { margin-top: 14px; }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .phases { flex-basis: 100%; order: -1; justify-content: center; } }
@@ -203,7 +204,7 @@ tr.best td { background: var(--hilite); font-weight: 700; }
 
 /* Result */
 .hero { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-.hero .big { font-size: 3rem; font-weight: 800; line-height: 1; }
+.hero .big { font-size: clamp(1.6rem, 9vw, 3rem); font-weight: 800; line-height: 1; overflow-wrap: anywhere; }
 .hero .sub { color: var(--ink-2); }
 .check { font-weight: 600; }
 .check.ok { color: var(--good); }
@@ -214,7 +215,7 @@ tr.best td { background: var(--hilite); font-weight: 700; }
 .tabs button { padding: 2px 8px; font-size: 0.8rem; border-radius: 999px; }
 .tabs button[aria-selected="true"] { background: var(--wc); color: #fff; border-color: transparent; }
 .mailbox { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; max-height: 360px; overflow: auto; }
-.mailbox li { display: flex; gap: 8px; padding: 2px 4px; border-bottom: 1px solid var(--hair); }
+.mailbox li { display: flex; gap: 8px; padding: 2px 4px; border-bottom: 1px solid var(--hair); overflow-wrap: anywhere; }
 .mailbox li .idx { color: var(--muted); min-width: 2ch; text-align: right; }
 .mailbox li.unread { color: var(--muted); }
 .mailbox li.cursor { border-bottom: 2px solid var(--accent); }
