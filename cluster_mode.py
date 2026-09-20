@@ -6,9 +6,13 @@ sync by checking both against a brute force.
 
 Protocol (all payloads are plain strings):
 
-    FREQ <num> <count>   scatter: a worker's local count for <num>, sent to its
-                         owner, owner = num % k
-    SCATTER_END          broadcast by every worker once its scatter is done
+    FREQ <num> <count> [<num> <count> ...]
+                         scatter: every (num, count) pair a worker holds for one
+                         owner (owner = num % k), batched into a single message.
+                         Every worker sends exactly one FREQ message to every
+                         owner, empty batches included ("FREQ "), so the k-th
+                         FREQ message an owner receives is its end-of-scatter
+                         marker.
     MODE <num> <count>   report: an owner's best (num, count) sent to worker 0
     MODE_END             sent to worker 0 by every worker after its report
 """
@@ -40,13 +44,16 @@ class Worker:
 
         # Hash partition: every occurrence of `num`, on every worker, routes to
         # the same owner, so the owner ends up with the exact global count.
+        batches = [[] for _ in range(self.k)]
         for num, count in localFreq.items():
             owner = num % self.k
-            self.sendAsyncMessage(owner, f"FREQ {num} {count}")
+            batches[owner].append(f"{num} {count}")
 
-        # Tell every worker this scatter is finished.
-        for i in range(self.k):
-            self.sendAsyncMessage(i, "SCATTER_END")
+        # One batched message per owner, sent even when the batch is empty:
+        # that is what lets the owner count k of them and know the scatter
+        # is finished.
+        for owner in range(self.k):
+            self.sendAsyncMessage(owner, "FREQ " + " ".join(batches[owner]))
 
     # Sum the counts for the nums this worker owns and pick its local mode.
     def aggregateFreq(self):
@@ -56,11 +63,11 @@ class Worker:
         while complete < self.k:
             msg = self.receive()
             if msg.startswith("FREQ"):
-                data = msg.split(" ")
-                num = int(data[1])
-                count = int(data[2])
-                aggFreq[num] = aggFreq.get(num, 0) + count
-            elif msg == "SCATTER_END":
+                data = msg.split()
+                for i in range(1, len(data), 2):
+                    num = int(data[i])
+                    count = int(data[i + 1])
+                    aggFreq[num] = aggFreq.get(num, 0) + count
                 complete += 1
 
         if not aggFreq:

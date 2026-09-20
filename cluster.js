@@ -49,14 +49,18 @@
     // Hash partition: every occurrence of `num`, on every worker, routes to
     // the same owner, so the owner ends up with the exact global count.
     var self = this;
+    var batches = [];
+    for (var b = 0; b < this.k; b++) batches.push([]);
     localFreq.forEach(function (count, num) {
       var owner = mod(num, self.k);
-      self.sendAsyncMessage(owner, 'FREQ ' + num + ' ' + count);
+      batches[owner].push(num + ' ' + count);
     });
 
-    // Tell every worker this scatter is finished.
+    // One batched message per owner, sent even when the batch is empty:
+    // that is what lets the owner count k of them and know the scatter
+    // is finished.
     for (var w = 0; w < this.k; w++) {
-      this.sendAsyncMessage(w, 'SCATTER_END');
+      this.sendAsyncMessage(w, 'FREQ ' + batches[w].join(' '));
     }
   };
 
@@ -68,11 +72,12 @@
     while (complete < this.k) {
       var msg = this.receive();
       if (msg.indexOf('FREQ') === 0) {
-        var data = msg.split(' ');
-        var num = parseInt(data[1], 10);
-        var count = parseInt(data[2], 10);
-        aggFreq.set(num, (aggFreq.get(num) || 0) + count);
-      } else if (msg === 'SCATTER_END') {
+        var data = msg.trim().split(/\s+/);
+        for (var i = 1; i + 1 < data.length; i += 2) {
+          var num = parseInt(data[i], 10);
+          var count = parseInt(data[i + 1], 10);
+          aggFreq.set(num, (aggFreq.get(num) || 0) + count);
+        }
         complete += 1;
       }
     }
