@@ -20,6 +20,21 @@ check([1, 2, 3, 4], 1);
 check(Array.from({ length: 49 }, (_, i) => (i + 1) * 4).concat(Array.from({ length: 49 }, (_, i) => (i + 1) * 4), [8]), 4);
 check([7], 10);
 
+// Hand-designed corner cases (mirrors test_corner_cases in the Python test);
+// expected values are fixed, not brute-forced.
+function expect(data, k, want) {
+  const got = new Cluster(data.slice(), k).findMode();
+  assert.strictEqual(got, want, `k=${k} data=[${data}] got=${got} expected=${want}`);
+}
+const rep = (v, n) => Array(n).fill(v);
+expect([1, 2, 2, 3, 3, 3, 4, 4, 4, 4], 3, 4);                          // 1. plain
+expect([1, 2, 3, 1, 2, 3], 2, 1);                                      // 2. three-way tie -> smallest
+expect([].concat(rep(7, 100), rep(3, 50), rep(11, 30), rep(5, 20)), 10, 7); // 3. larger dataset, k=10
+expect([5, -5, 0, 5, -5, 0, 5, -5], 2, -5);                            // 4. negatives & tie-breaker
+expect([8, 8, 8, 8, 8], 5, 8);                                         // 5. empty workers (4 owners get no FREQ)
+expect([1, 9, 2, 9, 3, 9, 4, 9, 1, 2, 3, 4], 4, 9);                    // 6. fragmented global mode
+expect([42], 10, 42);                                                  // 7. high k, low data
+
 // Trace sanity: every message sent is eventually received, in phase order.
 {
   const c = new Cluster([3, 1, 3, 2, 1, 3, 2, 2], 3);
