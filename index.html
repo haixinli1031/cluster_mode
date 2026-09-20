@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Distributed Mode Explorer</title>
+  <meta name="description" content="Step through a hash-partitioned frequency shuffle that computes the mode of a dataset spread across k workers.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <h1>Distributed Mode Explorer</h1>
+      <p class="tagline">How <code>k</code> workers find the most frequent integer without any of them seeing all the data: local counts → hash-partitioned shuffle → per-owner aggregate → reduce to worker 0.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card controls" aria-label="Inputs">
+      <div class="control">
+        <label for="kRange">Workers <output id="kOut" for="kRange">4</output></label>
+        <input id="kRange" type="range" min="1" max="10" value="4">
+      </div>
+      <div class="control grow">
+        <label for="dataInput">Dataset <span class="muted">(integers, max 50)</span></label>
+        <textarea id="dataInput" rows="2" spellcheck="false"></textarea>
+        <p id="dataError" class="error" role="alert" hidden></p>
+      </div>
+      <div class="control">
+        <label for="sizeInput">Generate</label>
+        <div class="row">
+          <input id="sizeInput" type="number" min="1" max="50" value="20" aria-label="Size of generated dataset">
+          <button id="genRandom" type="button" class="primary">Random</button>
+          <button id="genSkew" type="button" title="Every value is a multiple of k, so worker 0 owns all of them">Skewed</button>
+          <button id="genTies" type="button" title="Several values share the top frequency">Ties</button>
+        </div>
+      </div>
+    </section>
+
+    <nav class="card stepper" aria-label="Phases">
+      <button id="prevBtn" type="button" aria-label="Previous phase">‹ Prev</button>
+      <ol id="phaseList" class="phases"></ol>
+      <button id="nextBtn" type="button" aria-label="Next phase">Next ›</button>
+      <button id="runAllBtn" type="button" class="primary">Run all</button>
+    </nav>
+
+    <div class="layout">
+      <section class="card stage" aria-live="polite">
+        <div class="stage-head">
+          <h2 id="phaseTitle"></h2>
+          <p id="phaseBlurb" class="muted"></p>
+        </div>
+        <div id="stage"></div>
+      </section>
+
+      <aside class="side">
+        <section class="card">
+          <h3>Mailboxes</h3>
+          <p class="muted small">Raw payload strings as each worker sees them. The cursor marks how far the worker has read at the end of this phase.</p>
+          <div id="mailboxTabs" class="tabs" role="tablist"></div>
+          <ol id="mailbox" class="mailbox"></ol>
+        </section>
+        <section class="card">
+          <h3>Network</h3>
+          <div id="netStats"></div>
+        </section>
+      </aside>
+    </div>
+
+    <footer class="muted small foot">
+      Reference implementation: <code>cluster_mode.py</code> · browser port: <code>cluster.js</code>. Ties resolve to the smallest value at every level.
+    </footer>
+  </main>
+
+  <script src="cluster.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
