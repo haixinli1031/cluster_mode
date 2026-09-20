@@ -434,7 +434,7 @@
   }
   // Several distinct values, each repeated the same number of times, shuffled.
   function genTies() {
-    var n = size(), reps = Math.max(2, Math.min(4, Math.floor(n / 3)));
+    var n = size(), reps = Math.min(n, Math.max(2, Math.min(4, Math.floor(n / 3))));
     var distinct = Math.max(1, Math.floor(n / reps)), out = [];
     for (var v = 1; v <= distinct; v++) for (var r = 0; r < reps; r++) out.push(v);
     while (out.length < n) out.push(randint(distinct + 1, distinct + 9));
