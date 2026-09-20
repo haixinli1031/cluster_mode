@@ -111,6 +111,22 @@ button.link { border: 0; background: none; color: var(--accent); text-decoration
 .banner-actions { display: flex; gap: 4px; align-items: center; }
 .stale .stage-head, .stale #stage, .stale .side { opacity: 0.35; pointer-events: none; }
 
+/* Tooltips: instant on hover or keyboard focus, text from data-tip */
+/* Anchored to the button row (not the button) so it never spills off a narrow screen */
+.row { position: relative; }
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 10;
+  width: 300px; max-width: 100%; padding: 8px 10px;
+  background: var(--ink); color: var(--surface);
+  border-radius: 6px; font-size: 0.82rem; line-height: 1.35; text-align: left; font-weight: 400;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  opacity: 0; visibility: hidden; transition: opacity 0.1s;
+  pointer-events: none;
+}
+.tip:hover::after, .tip:focus-visible::after { opacity: 1; visibility: visible; }
+textarea::placeholder { color: var(--muted); opacity: 1; }
+
 /* Stepper */
 .stepper { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .phases { list-style: none; margin: 0; padding: 0; display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
