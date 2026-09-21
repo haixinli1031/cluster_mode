@@ -24,7 +24,9 @@ The algorithm is a hash-partitioned frequency shuffle:
 
 ## Run it
 
-No build step, no server-side code.
+**Live:** <https://haixinli1031.github.io/cluster_mode/> — nothing to install.
+
+To run it yourself (no build step, no server-side code):
 
 - **Open the file:** double-click `index.html`.
 - **Local server:** `python3 -m http.server 8000` then open
