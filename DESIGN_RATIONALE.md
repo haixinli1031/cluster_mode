@@ -20,6 +20,14 @@ It fits the self-contained requirement structurally, not by bolting on a demo mo
 
 **The comparison panel refuses the flattering baseline.** The obvious foil — "ship all raw data to W0" — would make the shuffle look brilliant, and it is deliberately absent, because it violates the problem's constraint and therefore isn't a real alternative. Against the only legitimate competitor (every worker sends its full count table to W0), the shuffle sends *more* messages and roughly the same bytes. Its actual win is that the busiest worker's merge work and memory shrink by a factor of `k`. The panel states the loss as plainly as the gain — and because at n ≤ 1,000 none of this is visible, the *At scale* sliders project the run's own value mix out to n = 10⁹ and k = 1,000, with the modelling assumptions printed on screen and verified to reproduce the live run exactly.
 
+By playing with the *At scale* slider bar, the user can learn:
+
+The hash shuffle is not cheaper than sending every count table to W0 — it sends more messages (k² vs k−1) and slightly more bytes, always. What it buys is that no single worker's load grows with the cluster. In "all → W0," worker 0 merges every other worker's table, so its work and memory scale with k×D: adding workers makes the bottleneck worse. In the shuffle, each owner holds only D/k keys, so the busiest worker's memory shrinks as you add workers, and its merge work stays flat at ~D.
+
+**When it wins:** when D (distinct values) is large enough that one worker's count table won't fit or won't merge in time — the shuffle is the only one of the two that scales there. The gap in peak load is roughly k× (3× at k=4, 99× at k=100).
+
+**When it doesn't:** when D is small, or when k > D. At k=1000 with D=1000 each owner already holds exactly one key — there's nothing left to split, and you're paying a million messages for it. Pick k ≲ D. And if your bottleneck is the network rather than any single worker, the naive approach is genuinely the better choice.
+
 ## Key decisions and trade-offs
 
 - **Static site, two implementations in lockstep.** No backend means "open the file" is the whole deployment; the price is reimplementing the algorithm in JS. Paid down with a line-for-line port plus a shared test corpus, so the browser cannot silently drift from the reference.
