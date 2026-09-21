@@ -55,12 +55,14 @@ No build step, no server-side code.
   that collapse are sorted by count so the rows that matter stay visible.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
-- **Network** reports this run's traffic: messages (always `k²` for the
-  scatter, plus the reports to worker 0), payload bytes, pairs shuffled, raw
-  values leaving their worker (always 0) and the busiest owner's share. A
-  **projection** block models the current value mix at n = 1,000, 100,000
-  and 1,000,000: messages never change and bytes grow only with the number
-  of *distinct* values, so the cost per value falls toward zero. There is
+- **Network** compares this run's hash shuffle with the other approach that
+  respects the rules — *all → W0*, where every worker sends its whole local
+  count table to worker 0, which merges them alone. Rows: messages, payload
+  bytes, and the load on the busiest worker (pairs it must merge, keys it
+  must hold). The shuffle sends more messages and about the same bytes; its
+  advantage is that the busiest worker's load shrinks by a factor of `k`.
+  The **At scale** sliders project the current value mix to any `n` up to
+  10⁹ and any `k` up to 1,000 so you can watch that gap grow. There is
   deliberately no "ship everything to one worker" baseline — that would let
   one worker see all the data, which the problem forbids.
 

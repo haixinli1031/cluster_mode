@@ -23,7 +23,8 @@
     { id: 'result', title: 'Result', blurb: 'Worker 0 waits for k−1 MODE_END messages and keeps the highest count, smallest value. That is the global mode.' }
   ];
 
-  var state = { k: 4, data: [], phase: 0, mailboxWorker: 0, run: null, stale: false };
+  var state = { k: 4, data: [], phase: 0, mailboxWorker: 0, run: null, stale: false, scale: { e: 60, kIdx: 3, d: 0 } };
+  var K_STEPS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 30, 50, 70, 100, 150, 200, 300, 500, 700, 1000];
 
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -97,6 +98,9 @@
     var markers = {};
     cluster.trace.forEach(function (e) { if (e.type === 'phase') markers[e.phase] = e.readIndices; });
     state.run = { cluster: cluster, mode: mode, markers: markers, brute: CM.bruteMode(state.data) };
+    // Scale sliders: k follows the run, n starts at one million.
+    var distinct = new Set(state.data).size;
+    state.scale = { e: Math.max(60, Math.ceil(Math.log10(state.data.length) * 10)), kIdx: K_STEPS.indexOf(state.k), d: Math.ceil(Math.log10(distinct) * 10) };
   }
 
   // Messages delivered up to and including the given UI phase, plus the read
@@ -383,82 +387,172 @@
     });
   }
 
-  // Model this dataset's value mix at a larger n: every worker holds every
-  // distinct value in proportion, batches one FREQ per owner, owners report
-  // to W0. Returns projected message and byte totals.
-  function project(N) {
-    var k = state.k, n = state.data.length;
-    var counts = new Map();
-    state.data.forEach(function (v) { counts.set(v, (counts.get(v) || 0) + 1); });
-    var perWorker = new Map();   // value -> count held by ONE worker at scale N
-    counts.forEach(function (c, v) { perWorker.set(v, Math.max(1, Math.round(c * N / n / k))); });
+  // Cost model shared by the actual run and the scale projection. Two
+  // approaches that both keep raw data at home:
+  //   shuffle  - this implementation: pairs hash-partitioned to k owners
+  //   central  - every worker sends its whole local count table to W0
+  // Each returns messages, payload bytes, and the load on the busiest worker
+  // (pairs received, keys held).
+  function costActual() {
+    var run = state.run, k = state.k;
+    var sends = run.cluster.trace.filter(function (e) { return e.type === 'send'; });
+    var perOwner = {};
+    sends.forEach(function (e) { if (e.phase === 'scatter') perOwner[e.to] = (perOwner[e.to] || 0) + parsePairs(e.payload).length; });
+    var peakIn = 0, peakKeys = 0;
+    Object.keys(perOwner).forEach(function (w) { peakIn = Math.max(peakIn, perOwner[w]); });
+    run.cluster.workers.forEach(function (wk) { peakKeys = Math.max(peakKeys, wk.aggFreq ? wk.aggFreq.size : 0); });
+    var shuffle = { msgs: sends.length, bytes: sends.reduce(function (a, e) { return a + e.payload.length; }, 0), peakIn: peakIn, peakKeys: peakKeys };
 
-    var bytes = 0, msgs = 0;
-    for (var w = 0; w < k; w++) {
-      for (var o = 0; o < k; o++) {
-        var parts = [];
-        perWorker.forEach(function (c, v) { if (CM.mod(v, k) === o) parts.push(v + ' ' + c); });
-        bytes += ('FREQ ' + parts.join(' ')).length; msgs++;
-      }
-    }
-    // Report phase: each owner with values sends its (mode, global count).
-    var ownerBest = new Map();
-    perWorker.forEach(function (c, v) {
-      var o = CM.mod(v, k), g = c * k, cur = ownerBest.get(o);
-      if (!cur || g > cur[1] || (g === cur[1] && v < cur[0])) ownerBest.set(o, [v, g]);
+    var cBytes = 0, cIn = 0;
+    run.cluster.workers.forEach(function (wk, w) {
+      if (w === 0) return;
+      var parts = []; wk.localFreq.forEach(function (c, v) { parts.push(v + ' ' + c); });
+      cBytes += ('COUNTS ' + parts.join(' ')).length;
+      cIn += wk.localFreq.size;
     });
-    for (var r = 1; r < k; r++) {
-      var b = ownerBest.get(r);
-      if (b) { bytes += ('MODE ' + b[0] + ' ' + b[1]).length; msgs++; }
-      bytes += 'MODE_END'.length; msgs++;
+    var central = { msgs: Math.max(k - 1, 0), bytes: cBytes, peakIn: cIn, peakKeys: new Set(state.data).size };
+    return { shuffle: shuffle, central: central };
+  }
+
+  // Same value mix at N values on K workers: every worker holds every
+  // distinct value in proportion, so per-worker counts are c * N / n / K.
+  // Total digits of the integers 1..D (for the synthetic mix's value bytes).
+  function totalDigits(D) {
+    var sum = 0;
+    for (var d = 1, lo = 1; lo <= D; d++, lo *= 10) sum += d * (Math.min(D, lo * 10 - 1) - lo + 1);
+    return sum;
+  }
+
+  function costAtScale(N, K, D) {
+    var n = state.data.length, counts = new Map();
+    state.data.forEach(function (v) { counts.set(v, (counts.get(v) || 0) + 1); });
+    if (D !== counts.size) return costSynthetic(N, K, D);
+    var pairsPerOwner = new Array(K).fill(0), pairBytes = 0, best = new Map();
+    counts.forEach(function (c, v) {
+      var cw = Math.max(1, Math.round(c * N / n / K)), o = CM.mod(v, K);
+      pairsPerOwner[o]++;
+      pairBytes += String(v).length + 1 + String(cw).length;
+      var g = cw * K, cur = best.get(o);
+      if (!cur || g > cur[1] || (g === cur[1] && v < cur[0])) best.set(o, [v, g]);
+    });
+    var seps = 0, maxPairs = 0;
+    pairsPerOwner.forEach(function (pc) { if (pc > 0) seps += pc - 1; if (pc > maxPairs) maxPairs = pc; });
+    // per worker: K batches of "FREQ " + its pairs (space-separated)
+    var sMsgs = K * K, sBytes = K * (K * 5 + pairBytes + seps);
+    for (var r = 1; r < K; r++) {
+      var b = best.get(r);
+      if (b) { sMsgs++; sBytes += ('MODE ' + b[0] + ' ' + b[1]).length; }
+      sMsgs++; sBytes += 'MODE_END'.length;
     }
-    return { msgs: msgs, bytes: bytes };
+    var shuffle = { msgs: sMsgs, bytes: sBytes, peakIn: K * maxPairs, peakKeys: maxPairs };
+    var tableBytes = 'COUNTS '.length + pairBytes + Math.max(0, D - 1);
+    var central = { msgs: Math.max(K - 1, 0), bytes: Math.max(K - 1, 0) * tableBytes, peakIn: Math.max(K - 1, 0) * D, peakKeys: D };
+    return { shuffle: shuffle, central: central, D: D, synthetic: false };
+  }
+
+  // D distinct values 1..D, equally frequent, spread evenly over K owners.
+  function costSynthetic(N, K, D) {
+    var cw = Math.max(1, Math.round(N / D / K));
+    var pairBytes = totalDigits(D) + D * (1 + String(cw).length);
+    var owners = Math.min(K, D), maxPairs = Math.ceil(D / K), seps = D - owners;
+    var sMsgs = K * K, sBytes = K * (K * 5 + pairBytes + seps);
+    for (var r = 1; r < owners; r++) { sMsgs += 1; sBytes += ('MODE ' + r + ' ' + (cw * K)).length; }
+    sMsgs += Math.max(K - 1, 0); sBytes += Math.max(K - 1, 0) * 'MODE_END'.length;
+    var shuffle = { msgs: sMsgs, bytes: sBytes, peakIn: K * maxPairs, peakKeys: maxPairs };
+    var tableBytes = 'COUNTS '.length + pairBytes + (D - 1);
+    var central = { msgs: Math.max(K - 1, 0), bytes: Math.max(K - 1, 0) * tableBytes, peakIn: Math.max(K - 1, 0) * D, peakKeys: D };
+    return { shuffle: shuffle, central: central, D: D, synthetic: true };
+  }
+
+  function compareTable(cost, highlight) {
+    var rows = [
+      ['messages', cost.shuffle.msgs, cost.central.msgs, false],
+      ['payload bytes', cost.shuffle.bytes, cost.central.bytes, false],
+      ['peak pairs in', cost.shuffle.peakIn, cost.central.peakIn, true],
+      ['peak keys held', cost.shuffle.peakKeys, cost.central.peakKeys, true],
+      ['raw values sent', 0, 0, false]
+    ];
+    var grid = h('div', { class: 'stats stats-3' }, [h('div'), h('div', { class: 'h r', text: 'hash shuffle' }), h('div', { class: 'h r', text: 'all → W0' })]);
+    rows.forEach(function (r) {
+      var cls = r[3] && highlight ? ' hot' : '';
+      grid.appendChild(h('div', { class: 'h' + cls, text: r[0] }));
+      grid.appendChild(h('div', { class: 'r' + cls, text: fmtNum(r[1]) }));
+      grid.appendChild(h('div', { class: 'r' + cls, text: fmtNum(r[2]) }));
+    });
+    return grid;
+  }
+
+  function scaleN() { return Math.round(Math.pow(10, state.scale.e / 10)); }
+  // 1234 -> "1.23 K", 100000 -> "100 K", 2e9 -> "2 B" (trailing zeros trimmed only after a decimal point)
+  function fmtBig(x) {
+    var trim = function (t) { return t.indexOf('.') === -1 ? t : t.replace(/0+$/, '').replace(/\.$/, ''); };
+    if (x >= 1e9) return trim((x / 1e9).toPrecision(3)) + ' B';
+    if (x >= 1e6) return trim((x / 1e6).toPrecision(3)) + ' M';
+    if (x >= 1e3) return trim((x / 1e3).toPrecision(3)) + ' K';
+    return fmtNum(x);
   }
 
   function renderStats() {
-    var run = state.run, k = state.k, n = state.data.length;
-    var sends = run.cluster.trace.filter(function (e) { return e.type === 'send'; });
-    var scatter = sends.filter(function (e) { return e.phase === 'scatter'; });
-    var bytes = sends.reduce(function (s, e) { return s + e.payload.length; }, 0);
-
-    var pairs = 0, pairsPerOwner = {};
-    scatter.forEach(function (e) {
-      var ps = parsePairs(e.payload);
-      pairs += ps.length;
-      pairsPerOwner[e.to] = (pairsPerOwner[e.to] || 0) + ps.length;
-    });
-    var maxPairs = Math.max.apply(null, [0].concat(Object.keys(pairsPerOwner).map(function (w) { return pairsPerOwner[w]; })));
-    var rows = [
-      ['messages', fmtNum(sends.length)],
-      ['payload bytes', fmtNum(bytes)],
-      ['(value, count) pairs shuffled', fmtNum(pairs)],
-      ['raw values leaving their worker', '0'],
-      ['max pairs into one owner', fmtNum(maxPairs)]
-    ];
+    var k = state.k, n = state.data.length;
+    var actual = costActual();
     els.netStats.innerHTML = '';
-    var grid = h('div', { class: 'stats stats-2' });
-    rows.forEach(function (r) {
-      grid.appendChild(h('div', { class: 'h', text: r[0] }));
-      grid.appendChild(h('div', { class: 'r', text: r[1] }));
-    });
-    els.netStats.appendChild(grid);
-    els.netStats.appendChild(h('p', { class: 'muted small', text: 'One FREQ message per worker \u2192 owner, so the scatter is always ' + k + '\u00b2 = ' + (k * k) + ' messages however large the data, plus the reports to W0. Only (value, count) pairs travel: no worker ever receives another worker\u2019s raw data. Max pairs into one owner shows how evenly the hash spreads the load.' }));
+    els.netStats.appendChild(h('p', { class: 'muted small', text: 'This run, k = ' + k + ', n = ' + fmtNum(n) + '. Two approaches that both keep raw data on its worker:' }));
+    els.netStats.appendChild(compareTable(actual, true));
+    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Hash shuffle = this implementation: (value, count) pairs go to k owners, ' + k + '² = ' + (k * k) + ' batch messages plus the reports. All → W0 = every worker sends its whole local count table to W0, which merges them alone. Same pairs travel either way; the difference is where the merging lands. Peak pairs in = pairs the busiest worker receives and merges; peak keys held = size of its count table.' }));
 
-    // Projection block
-    var sizes = [1000, 100000, 1000000];
-    var head = h('tr', null, [h('th', { text: 'n' }), h('th', { text: 'messages', class: 'num' }), h('th', { text: 'payload bytes', class: 'num' }), h('th', { text: 'bytes / value', class: 'num' })]);
-    var body = [h('tr', { class: 'best' }, [h('td', { class: 'nowrap', text: fmtNum(n) + ' (this run)' }), h('td', { class: 'num', text: fmtNum(sends.length) }), h('td', { class: 'num', text: fmtNum(bytes) }), h('td', { class: 'num', text: (bytes / n).toFixed(2) })])];
-    sizes.forEach(function (N) {
-      if (N <= n) return;
-      var pj = project(N);
-      body.push(h('tr', null, [h('td', { text: fmtNum(N) }), h('td', { class: 'num', text: fmtNum(pj.msgs) }), h('td', { class: 'num', text: fmtNum(pj.bytes) }), h('td', { class: 'num', text: (pj.bytes / N).toFixed(pj.bytes / N < 0.01 ? 4 : 2) })]));
-    });
-    var distinct = new Set(state.data).size;
-    els.netStats.appendChild(h('div', { class: 'section' }, [
-      h('h4', { text: 'Projection — same value mix, more data' }),
-      h('table', { class: 'proj' }, [h('thead', null, [head]), h('tbody', null, body)]),
-      h('p', { class: 'muted small', text: 'Assumes the ' + plural(distinct, 'distinct value') + ' above keep their proportions as n grows. Messages never change; bytes grow only with the number of distinct values (their counts gain digits), so the cost per value falls toward zero. Data with many rarely repeated values keeps bytes closer to n.' })
-    ]));
+    // ---- scale projection ----
+    var scale = h('div', { class: 'section scale' });
+    var runD = new Set(state.data).size;
+    var dMin = Math.ceil(Math.log10(runD) * 10);
+    // The slider's minimum is exactly this run's D (same-mix model); above it, a synthetic mix.
+    var scaleD = function () { return state.scale.d <= dMin ? runD : Math.max(runD + 1, Math.round(Math.pow(10, state.scale.d / 10))); };
+    var nOut = h('output', { text: fmtBig(scaleN()) }), kOut = h('output', { text: fmtNum(K_STEPS[state.scale.kIdx]) }), dOut = h('output');
+    var body = h('div');
+    function redraw() {
+      var N = scaleN(), K = K_STEPS[state.scale.kIdx], D = scaleD();
+      nOut.textContent = fmtBig(N); kOut.textContent = fmtNum(K); dOut.textContent = D === runD ? fmtNum(D) + ' (this run)' : fmtBig(D);
+      var c = costAtScale(N, K, D);
+      body.innerHTML = '';
+      body.appendChild(compareTable(c, true));
+      var maxIn = Math.max(1, c.shuffle.peakIn, c.central.peakIn);
+      body.appendChild(h('div', { class: 'section' }, [
+        h('h4', { text: 'Busiest worker: pairs it must merge' }),
+        h('div', { class: 'bars bars-2' }, [
+          h('span', { class: 'val', text: 'shuffle' }), h('div', null, [h('div', { class: 'bar ours', style: 'width: ' + (100 * c.shuffle.peakIn / maxIn) + '%' })]), h('span', { class: 'val', text: fmtNum(c.shuffle.peakIn) }),
+          h('span', { class: 'val', text: 'all → W0' }), h('div', null, [h('div', { class: 'bar theirs', style: 'width: ' + (100 * c.central.peakIn / maxIn) + '%' })]), h('span', { class: 'val', text: fmtNum(c.central.peakIn) })
+        ])
+      ]));
+      var ratio = c.shuffle.peakIn ? c.central.peakIn / c.shuffle.peakIn : 0;
+      var msg = K === 1 ? 'With one worker there is nothing to spread.'
+        : 'The shuffle spreads the merge over ' + fmtNum(Math.min(K, c.D)) + ' owners, so its busiest worker merges about ' + ratio.toFixed(ratio >= 10 ? 0 : 1) + '\u00d7 fewer pairs and holds ' + fmtBig(c.central.peakKeys) + ' \u2192 ' + fmtBig(c.shuffle.peakKeys) + ' keys. All \u2192 W0 piles every table onto W0, so adding workers only makes its job bigger.';
+      if (K > c.D) msg += ' Only ' + fmtNum(c.D) + ' distinct values means only ' + fmtNum(c.D) + ' owners can get a key \u2014 raise D to see the gap approach k.';
+      body.appendChild(h('p', { class: 'small', text: msg }));
+      body.appendChild(h('p', { class: 'muted small', text: c.synthetic
+        ? 'Model: ' + fmtBig(c.D) + ' equally frequent distinct values spread evenly over the owners. Bytes grow with distinct values (and their counts\u2019 digits); messages depend only on k.'
+        : 'Model: the ' + plural(c.D, 'distinct value') + ' of this run keep their proportions and every worker holds a share of each. Bytes grow only with distinct values (counts gain digits); messages depend only on k.' }));
+    }
+    var eMin = Math.ceil(Math.log10(Math.max(n, 1)) * 10), eMax = 90;
+    if (state.scale.e < eMin) state.scale.e = eMin;
+    var nRange = h('input', { type: 'range', min: eMin, max: eMax, value: state.scale.e, id: 'scaleN', 'aria-label': 'projected dataset size',
+      oninput: function () { state.scale.e = parseInt(nRange.value, 10); redraw(); } });
+    var kRange = h('input', { type: 'range', min: 0, max: K_STEPS.length - 1, value: state.scale.kIdx, id: 'scaleK', 'aria-label': 'projected worker count',
+      oninput: function () { state.scale.kIdx = parseInt(kRange.value, 10); redraw(); } });
+    if (state.scale.d < dMin) state.scale.d = dMin;
+    var dRange = h('input', { type: 'range', min: dMin, max: 60, value: state.scale.d, id: 'scaleD', 'aria-label': 'projected distinct values',
+      oninput: function () { state.scale.d = parseInt(dRange.value, 10); redraw(); } });
+    var picks = h('span', { class: 'picks' }, [1000, 1000000, 1000000000].map(function (N) {
+      return h('button', { type: 'button', class: 'link more', text: fmtBig(N), onclick: function () {
+        state.scale.e = Math.max(eMin, Math.round(Math.log10(N) * 10)); nRange.value = state.scale.e; redraw();
+      } });
+    }));
+    scale.appendChild(h('h4', { text: 'At scale' }));
+    scale.appendChild(h('div', { class: 'slider-row' }, [h('label', { for: 'scaleN', text: 'n' }), nRange, nOut, picks]));
+    scale.appendChild(h('div', { class: 'slider-row' }, [h('label', { for: 'scaleK', text: 'k' }), kRange, kOut]));
+    scale.appendChild(h('div', { class: 'slider-row' }, [h('label', { for: 'scaleD', text: 'D' }), dRange, dOut]));
+    scale.appendChild(h('p', { class: 'muted small', text: 'n = values \u00b7 k = workers \u00b7 D = distinct values.' }));
+    scale.appendChild(body);
+    els.netStats.appendChild(scale);
+    redraw();
   }
 
   // ---- top-level render ----------------------------------------------------
@@ -480,7 +574,15 @@
 
     renderMailbox();
     renderStats();
+    fitSidebar();
   }
+
+  // A sidebar taller than the viewport scrolls with the page instead of sticking.
+  function fitSidebar() {
+    var side = document.querySelector('.side');
+    if (side) side.classList.toggle('tall', side.scrollHeight > window.innerHeight - 28);
+  }
+  window.addEventListener('resize', fitSidebar);
 
   // ---- inputs --------------------------------------------------------------
   // The controls are a draft. Nothing recomputes until Run applies the draft

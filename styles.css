@@ -142,10 +142,10 @@ textarea::placeholder { color: var(--muted); opacity: 1; }
 .phases button[aria-current="step"] .num { color: inherit; opacity: 0.7; }
 
 /* Layout */
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
 .layout > * { min-width: 0; }
 .side .card:first-child { margin-top: 14px; }
-@media (min-width: 901px) { .side { position: sticky; top: 14px; max-height: calc(100vh - 28px); overflow: auto; } }
+@media (min-width: 901px) { .side:not(.tall) { position: sticky; top: 14px; } }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .phases { flex-basis: 100%; order: -1; justify-content: center; } }
 .stage-head { margin-bottom: 12px; }
@@ -244,6 +244,17 @@ tr.best td { background: var(--hilite); font-weight: 700; }
 /* Stats */
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
 .stats-2 { grid-template-columns: 1fr auto; }
+.stats-3 { grid-template-columns: 1fr auto auto; gap: 4px 12px; }
+.stats .hot { color: var(--ink); font-weight: 700; }
+.stats .h.hot::before { content: '\25B8 '; color: var(--accent); }
+.slider-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; font-size: 0.88rem; }
+.slider-row label { font-weight: 600; width: 1ch; }
+.slider-row input[type="range"] { flex: 1; min-width: 80px; width: auto; }
+.slider-row output { font-variant-numeric: tabular-nums; min-width: 5ch; }
+.picks { display: flex; gap: 2px; }
+.bars-2 { grid-template-columns: auto 1fr auto; }
+.bars-2 .bar.ours { background: var(--accent); }
+.bars-2 .bar.theirs { background: var(--muted); }
 .proj th, .proj td { padding: 3px 4px; font-size: 0.85rem; }
 .nowrap { white-space: nowrap; }
 .pair { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border-radius: 4px; background: var(--hair); }
