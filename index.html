@@ -29,13 +29,13 @@
       </div>
       <div class="control">
         <label for="sizeInput">Generate</label>
+        <p id="sizeError" class="error" role="alert" hidden></p>
         <div class="row">
           <input id="sizeInput" type="number" min="1" max="1000" value="20" aria-label="Size of generated dataset">
           <button id="genRandom" type="button" class="tip" data-tip="Fills the box with this many random integers. The range widens with size so values still repeat: 1–9 up to 50 values, 1–99 up to 500, 1–999 beyond.">Random</button>
           <button id="genSkew" type="button" class="tip" data-tip="Every value is a multiple of the worker count, so value mod k = 0 and worker 0 owns all of them. Shows an unbalanced shuffle in step 3.">Skewed</button>
           <button id="genTies" type="button" class="tip" data-tip="Several values repeat the same number of times, so the top count is tied. Shows the smallest-value-wins rule in steps 4 and 6.">Ties</button>
         </div>
-        <p id="sizeError" class="error" role="alert" hidden></p>
       </div>
       <div class="control">
         <label aria-hidden="true">&nbsp;</label>

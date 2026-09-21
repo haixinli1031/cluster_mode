@@ -85,7 +85,8 @@ h3 { font-size: 0.95rem; margin: 0 0 6px; text-transform: uppercase; letter-spac
 .control output { font-weight: 700; color: var(--accent); margin-left: 4px; }
 .row { display: flex; gap: 6px; flex-wrap: wrap; }
 input[type="range"] { width: 200px; accent-color: var(--accent); }
-input[type="number"] { width: 64px; }
+input[type="number"] { width: 84px; }
+.control .error { margin: 0 0 4px; }
 input[aria-invalid="true"] { border-color: var(--bad); outline: 1px solid var(--bad); }
 textarea, input[type="number"] {
   font: inherit; color: var(--ink); background: var(--page);
