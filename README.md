@@ -35,9 +35,10 @@ No build step, no server-side code.
 ## Use it
 
 - **Workers** slider: 1–10.
-- **Dataset** box: up to 50 integers (negatives allowed), separated by commas
-  or spaces.
-- **Generate**: *Random* (default, 20 values in 1–9), *Skewed* (every value is
+- **Dataset** box: up to 1,000 integers (negatives allowed), separated by
+  commas or spaces. A live count of values and distinct values sits under it.
+- **Generate**: *Random* (default 20 values; the range widens with size so
+  values still repeat — 1–9 up to 50, 1–99 up to 500, 1–999 beyond), *Skewed* (every value is
   a multiple of `k`, so worker 0 owns all of them — watch the shuffle-balance
   bars), *Ties* (several values share the top count — watch the tie-breaks).
   Generators only fill the dataset box.
@@ -48,11 +49,15 @@ No build step, no server-side code.
   locked. *Revert* in the banner restores the controls to the current run.
 - Step through the six phases with *Prev / Next*, the phase pills, or the
   arrow keys. *Skip to result* jumps to the last phase.
+- Large runs stay readable: shards over 30 values, count tables over 10 rows,
+  scatter legends over 30 distinct values, batches over 5 pairs and mailbox
+  payloads over 80 characters collapse behind a "+N more" link. Count tables
+  that collapse are sorted by count so the rows that matter stay visible.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
 - **Network** compares this run's shuffle (one `FREQ` per worker → owner, so
   the scatter is always `k²` messages) with the naive approach (every worker
-  ships its raw slice to worker 0). At ≤ 50 values naive still wins on
+  ships its raw slice to worker 0). At the app's scale naive still wins on
   bytes, so a **projection** block models the current value mix at
   n = 1,000, 100,000 and 1,000,000: shuffle traffic grows with the number of
   *distinct* values, naive traffic grows with `n`, and raw data never leaves

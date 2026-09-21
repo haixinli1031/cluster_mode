@@ -4,7 +4,15 @@
   'use strict';
 
   var CM = window.ClusterMode;
-  var MAX_K = 10, MAX_N = 50, DEFAULT_N = 20;
+  var MAX_K = 10, MAX_N = 1000, DEFAULT_N = 20;
+  // Detail limits: panels collapse past these so large runs stay readable.
+  var CHIP_LIMIT = 20;      // values shown per shard before "+N more"
+  var CHIP_COLLAPSE = 30;   // shards larger than this are collapsed
+  var ROW_LIMIT = 10;       // rows shown per count table
+  var LEGEND_LIMIT = 30;    // distinct values shown as chips in the scatter legend
+  var PAIR_LIMIT = 5;       // pairs shown per batch line
+  var PAYLOAD_LIMIT = 80;   // characters of a mailbox payload shown before "…"
+  var DECODE_PAIRS = 6;     // pairs named in the decoder line
 
   var PHASES = [
     { id: 'partition', title: 'Partition', blurb: 'The dataset is split evenly across workers. Each worker can only see its own slice.' },
@@ -20,7 +28,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     kRange: $('kRange'), kOut: $('kOut'), dataInput: $('dataInput'), dataError: $('dataError'),
-    sizeInput: $('sizeInput'), genRandom: $('genRandom'), genSkew: $('genSkew'), genTies: $('genTies'),
+    sizeInput: $('sizeInput'), dataCount: $('dataCount'), genRandom: $('genRandom'), genSkew: $('genSkew'), genTies: $('genTies'),
     prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), skipBtn: $('skipBtn'), phaseList: $('phaseList'),
     runBtn: $('runBtn'), bannerRun: $('bannerRun'), revertBtn: $('revertBtn'), staleBanner: $('staleBanner'), staleText: $('staleText'), layout: $('layout'),
     phaseTitle: $('phaseTitle'), phaseBlurb: $('phaseBlurb'), stage: $('stage'),
@@ -53,6 +61,30 @@
   function chip(num, owner) {
     return h('span', { class: 'chip' + (owner !== undefined ? ' owned' : ''), style: owner !== undefined ? wStyle(owner) : null, text: String(num) });
   }
+  // Renders the first `limit` items; past that, a "+N more" link expands to all.
+  function truncated(items, limit, renderItem, wrapClass, noun) {
+    var wrap = h('div', { class: wrapClass });
+    function fill(all) {
+      wrap.innerHTML = '';
+      var shown = all ? items : items.slice(0, limit);
+      shown.forEach(function (it) { wrap.appendChild(renderItem(it)); });
+      if (items.length > limit) {
+        wrap.appendChild(h('button', {
+          type: 'button', class: 'link more',
+          text: all ? 'show fewer' : '+' + fmtNum(items.length - limit) + ' more ' + noun,
+          onclick: function () { fill(!all); }
+        }));
+      }
+    }
+    fill(false);
+    return wrap;
+  }
+  function minMax(arr) {
+    var lo = Infinity, hi = -Infinity;
+    arr.forEach(function (v) { if (v < lo) lo = v; if (v > hi) hi = v; });
+    return [lo, hi];
+  }
+
   function sortedEntries(map) {
     return Array.from(map.entries()).sort(function (a, b) { return a[0] - b[0]; });
   }
@@ -114,22 +146,44 @@
       rem ? ', first ' + rem + ' worker' + (rem === 1 ? '' : 's') + ' get one extra' : ''
     ]);
     var cards = state.run.cluster.shards.map(function (shard, w) {
-      return workerCard(w, null, [shard.length ? h('div', { class: 'chips' }, shard.map(function (v) { return chip(v); })) : h('p', { class: 'empty', text: 'no data' })]);
+      if (!shard.length) return workerCard(w, null, [h('p', { class: 'empty', text: 'no data' })]);
+      var big = shard.length > CHIP_COLLAPSE, mm = minMax(shard);
+      var meta = big ? fmtNum(shard.length) + ' values · ' + new Set(shard).size + ' distinct · min ' + mm[0] + ' · max ' + mm[1] : null;
+      return workerCard(w, meta, [truncated(shard, big ? CHIP_LIMIT : Infinity, function (v) { return chip(v); }, 'chips', 'values')]);
     });
     return [note, h('div', { class: 'workers' }, cards)];
   }
 
   function freqTable(entries, best, ownerOf) {
-    return h('table', null, [
-      h('thead', null, [h('tr', null, [h('th', { text: 'value' }), h('th', { text: 'count', class: 'num' }), ownerOf ? h('th', { text: 'owner' }) : null])]),
-      h('tbody', null, entries.map(function (e) {
-        return h('tr', { class: best && best.indexOf(e[0]) !== -1 ? 'best' : null }, [
+    var big = entries.length > ROW_LIMIT;
+    // Large tables sort by count so the rows that matter are the visible ones.
+    var rows = big ? entries.slice().sort(function (a, b) { return b[1] - a[1] || a[0] - b[0]; }) : entries;
+    var cols = ownerOf ? 3 : 2;
+    var table = h('table', null, [
+      h('thead', null, [h('tr', null, [h('th', { text: 'value' }), h('th', { text: 'count', class: 'num' }), ownerOf ? h('th', { text: 'owner' }) : null])])
+    ]);
+    var tbody = h('tbody');
+    function fill(all) {
+      tbody.innerHTML = '';
+      (all ? rows : rows.slice(0, ROW_LIMIT)).forEach(function (e) {
+        tbody.appendChild(h('tr', { class: best && best.indexOf(e[0]) !== -1 ? 'best' : null }, [
           h('td', null, [chip(e[0], ownerOf ? ownerOf(e[0]) : undefined)]),
           h('td', { class: 'num', text: e[1] }),
           ownerOf ? h('td', null, [badge(ownerOf(e[0]))]) : null
-        ]);
-      }))
-    ]);
+        ]));
+      });
+      if (big) {
+        tbody.appendChild(h('tr', null, [h('td', { colspan: cols }, [h('button', {
+          type: 'button', class: 'link more',
+          text: all ? 'show top ' + ROW_LIMIT : '+' + fmtNum(rows.length - ROW_LIMIT) + ' more values',
+          onclick: function () { fill(!all); }
+        })])]));
+      }
+    }
+    fill(false);
+    table.appendChild(tbody);
+    if (big) table.appendChild(h('caption', { class: 'muted small', text: 'sorted by count' }));
+    return table;
   }
 
   function renderCount() {
@@ -144,9 +198,11 @@
     var k = state.k;
     var ownerOf = function (v) { return CM.mod(v, k); };
     var distinct = Array.from(new Set(state.data)).sort(function (a, b) { return a - b; });
-    var legend = h('div', { class: 'legend' }, [h('span', { class: 'muted small', text: 'owner = value mod ' + k + ':' })].concat(distinct.map(function (v) {
-      return h('span', null, [chip(v, ownerOf(v)), ' ', badge(ownerOf(v)), ' ']);
-    })));
+    var legend = distinct.length > LEGEND_LIMIT
+      ? h('p', { class: 'muted small', text: fmtNum(distinct.length) + ' distinct values; owner = value mod ' + k + '. Per-owner totals are in the balance bars below.' })
+      : h('div', { class: 'legend' }, [h('span', { class: 'muted small', text: 'owner = value mod ' + k + ':' })].concat(distinct.map(function (v) {
+          return h('span', null, [chip(v, ownerOf(v)), ' ', badge(ownerOf(v)), ' ']);
+        })));
 
     var sends = sendsIn('scatter');
     var cards = state.run.cluster.workers.map(function (worker, w) {
@@ -155,10 +211,9 @@
       var items = mine.map(function (e) {
         var pairs = parsePairs(e.payload);
         pairTotal += pairs.length;
-        var parts = [h('code', { text: 'FREQ' })];
-        if (pairs.length) pairs.forEach(function (pr) { parts.push(h('span', { class: 'pair', text: pr[0] + ' ' + pr[1] })); });
+        var parts = [h('code', { text: 'FREQ' }), h('span', { class: 'arrow', text: '→' }), badge(e.to)];
+        if (pairs.length) parts.push(truncated(pairs, PAIR_LIMIT, function (pr) { return h('span', { class: 'pair', text: pr[0] + ' ' + pr[1] }); }, 'pairs', 'pairs'));
         else parts.push(h('span', { class: 'muted', text: '(empty)' }));
-        parts.push(h('span', { class: 'arrow', text: '→' }), badge(e.to));
         return h('li', null, parts);
       });
       return workerCard(w, 'sends ' + plural(mine.length, 'message') + ' · ' + plural(pairTotal, 'pair'), [h('ul', { class: 'msgs' }, items)]);
@@ -260,7 +315,9 @@
     if (e.payload.indexOf('FREQ') === 0) {
       var pairs = parsePairs(e.payload);
       if (!pairs.length) return 'Empty batch from W' + e.from + ' \u2192 W' + to + ': W' + e.from + ' holds no values that W' + to + ' owns. Still sent, and still one of the ' + k + ' batches W' + to + ' waits for.';
-      var list = pairs.map(function (pr) { return pr[0] + ' \u00d7' + pr[1]; }).join(', ');
+      var shown = pairs.length > DECODE_PAIRS ? pairs.slice().sort(function (a, b) { return b[1] - a[1] || a[0] - b[0]; }).slice(0, DECODE_PAIRS) : pairs;
+      var list = shown.map(function (pr) { return pr[0] + ' \u00d7' + pr[1]; }).join(', ');
+      if (pairs.length > DECODE_PAIRS) list = plural(pairs.length, 'pair') + ' (largest: ' + list + ', \u2026)';
       return 'Batch from W' + e.from + ' \u2192 W' + to + ': ' + list + ' \u2014 W' + e.from + '\u2019s local counts for the ' + plural(pairs.length, 'value') + ' that W' + to + ' owns (value mod ' + k + ' = ' + to + ').';
     }
     if (e.payload.indexOf('MODE ') === 0) {
@@ -269,6 +326,21 @@
     }
     if (e.payload === 'MODE_END') return 'W' + e.from + ' has finished reporting. W0 waits for k \u2212 1 = ' + (k - 1) + ' of these before deciding.';
     return e.payload;
+  }
+  // Long payloads show a prefix with a "+N chars" toggle; bytes are always counted in full.
+  function payloadSpan(payload) {
+    if (payload.length <= PAYLOAD_LIMIT) return h('span', { text: payload });
+    var span = h('span'), full = false;
+    function fill() {
+      span.innerHTML = '';
+      span.appendChild(document.createTextNode(full ? payload : payload.slice(0, PAYLOAD_LIMIT) + '…'));
+      span.appendChild(h('button', {
+        type: 'button', class: 'link more', text: full ? 'less' : '+' + fmtNum(payload.length - PAYLOAD_LIMIT) + ' chars',
+        onclick: function (ev) { ev.stopPropagation(); full = !full; fill(); }
+      }));
+    }
+    fill();
+    return span;
   }
   function setDecode(text, active) {
     els.mailboxDecode.textContent = text;
@@ -303,7 +375,7 @@
         class: (i >= cursor ? 'unread' : '') + (i === cursor - 1 ? ' cursor' : ''), tabindex: '0',
         onmouseenter: explain, onfocus: explain, onclick: explain
       }, [
-        h('span', { class: 'idx', text: i }), badge(e.from), h('span', { text: e.payload }),
+        h('span', { class: 'idx', text: i }), badge(e.from), payloadSpan(e.payload),
         e.payload === 'FREQ ' ? h('span', { class: 'muted', text: '(empty batch)' }) : null
       ]);
       els.mailbox.appendChild(li);
@@ -447,10 +519,12 @@
     try {
       var data = parseData(els.dataInput.value);
       els.dataError.hidden = true;
+      els.dataCount.textContent = plural(fmtNum(data.length), 'value') + ' · ' + plural(new Set(data).size, 'distinct value');
       return data;
     } catch (err) {
       els.dataError.textContent = err.message;
       els.dataError.hidden = false;
+      els.dataCount.textContent = '';
       return null;
     }
   }
@@ -531,9 +605,12 @@
   }
   function randint(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
 
+  // Value range widens with size so the shuffle stays interesting: 1–9 up to
+  // 50 values, 1–99 up to 500, 1–999 beyond.
+  function randomRange(n) { return n <= 50 ? 9 : n <= 500 ? 99 : 999; }
   function genRandom() {
-    var n = size(), out = [];
-    for (var i = 0; i < n; i++) out.push(randint(1, 9));
+    var n = size(), hi = randomRange(n), out = [];
+    for (var i = 0; i < n; i++) out.push(randint(1, hi));
     setDraftData(out);
   }
   // Every value is a multiple of k, so value mod k = 0 and worker 0 owns all of them.

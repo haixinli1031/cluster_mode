@@ -22,15 +22,16 @@
         <input id="kRange" type="range" min="1" max="10" value="4">
       </div>
       <div class="control grow">
-        <label for="dataInput">Dataset <span class="muted">(integers separated by commas, max 50)</span></label>
+        <label for="dataInput">Dataset <span class="muted">(integers separated by commas, max 1,000)</span></label>
         <textarea id="dataInput" rows="2" spellcheck="false" placeholder="e.g. 3, 1, 3, 2, 7, -4, 9"></textarea>
         <p id="dataError" class="error" role="alert" hidden></p>
+        <p id="dataCount" class="muted small count"></p>
       </div>
       <div class="control">
         <label for="sizeInput">Generate</label>
         <div class="row">
-          <input id="sizeInput" type="number" min="1" max="50" value="20" aria-label="Size of generated dataset">
-          <button id="genRandom" type="button" class="tip" data-tip="Fills the box with this many random integers from 1 to 9. The small range makes values repeat, so there is a clear mode.">Random</button>
+          <input id="sizeInput" type="number" min="1" max="1000" value="20" aria-label="Size of generated dataset">
+          <button id="genRandom" type="button" class="tip" data-tip="Fills the box with this many random integers. The range widens with size so values still repeat: 1–9 up to 50 values, 1–99 up to 500, 1–999 beyond.">Random</button>
           <button id="genSkew" type="button" class="tip" data-tip="Every value is a multiple of the worker count, so value mod k = 0 and worker 0 owns all of them. Shows an unbalanced shuffle in step 3.">Skewed</button>
           <button id="genTies" type="button" class="tip" data-tip="Several values repeat the same number of times, so the top count is tied. Shows the smallest-value-wins rule in steps 4 and 6.">Ties</button>
         </div>
