@@ -44,6 +44,12 @@ expect([42], 10, 42);                                                  // 7. hig
   assert.strictEqual(sends, recvs, 'every sent message is read exactly once');
   assert.deepStrictEqual(c.trace.filter(e => e.type === 'phase').map(e => e.phase),
     ['scatter', 'aggregate', 'report', 'result', 'done']);
+  // Batched scatter: every worker receives exactly k FREQ messages, one from each worker.
+  for (let w = 0; w < 3; w++) {
+    const freq = c.trace.filter(e => e.type === 'send' && e.to === w && e.payload.startsWith('FREQ'));
+    assert.strictEqual(freq.length, 3, `W${w} should receive k FREQ batches`);
+    assert.deepStrictEqual(freq.map(e => e.from).sort(), [0, 1, 2]);
+  }
 }
 
 // Deterministic PRNG so failures are reproducible.

@@ -9,8 +9,8 @@
   var PHASES = [
     { id: 'partition', title: 'Partition', blurb: 'The dataset is split evenly across workers. Each worker can only see its own slice.' },
     { id: 'count', title: 'Local count', blurb: 'Each worker counts its own values. Raw data never leaves the worker — only (value, count) pairs will.' },
-    { id: 'scatter', title: 'Scatter by hash', blurb: 'Each (value, count) is sent to the value’s owner, owner = value mod k. Every occurrence of a value, on every worker, lands on the same owner. Then each worker broadcasts SCATTER_END.' },
-    { id: 'aggregate', title: 'Aggregate', blurb: 'Each owner drains its mailbox until it has seen k SCATTER_END messages, summing counts. It now holds the exact global count of every value it owns and picks its local mode (smallest value on a tie).' },
+    { id: 'scatter', title: 'Scatter by hash', blurb: 'Each (value, count) pair belongs to the value’s owner, owner = value mod k, so every occurrence of a value, on every worker, lands on the same owner. Pairs are grouped by owner and sent as one FREQ message per owner — sent even when empty, so the k-th FREQ an owner receives tells it the scatter is finished.' },
+    { id: 'aggregate', title: 'Aggregate', blurb: 'Each owner reads its mailbox until it has received k FREQ batches, summing the counts inside them. It now holds the exact global count of every value it owns and picks its local mode (smallest value on a tie).' },
     { id: 'report', title: 'Report', blurb: 'Workers 1..k−1 send their local mode to worker 0 as MODE value count, then MODE_END. Worker 0 uses its own result directly.' },
     { id: 'result', title: 'Result', blurb: 'Worker 0 waits for k−1 MODE_END messages and keeps the highest count, smallest value. That is the global mode.' }
   ];
@@ -56,7 +56,7 @@
   function sortedEntries(map) {
     return Array.from(map.entries()).sort(function (a, b) { return a[0] - b[0]; });
   }
-  function plural(n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); }
+  function plural(n, word, suffix) { return n + ' ' + word + (n === 1 ? '' : (suffix || 's')); }
 
   // ---- run the algorithm ---------------------------------------------------
   function runCluster() {
@@ -85,6 +85,14 @@
     });
     return { boxes: boxes, cursors: run.markers[cursorMarker] };
   }
+
+  // 'FREQ 3 2 6 1' -> [[3, 2], [6, 1]]; 'FREQ ' -> []
+  function parsePairs(payload) {
+    var t = payload.trim().split(/\s+/), out = [];
+    for (var i = 1; i + 1 < t.length; i += 2) out.push([parseInt(t[i], 10), parseInt(t[i + 1], 10)]);
+    return out;
+  }
+  function fmtNum(x) { return Math.round(x).toLocaleString('en-US'); }
 
   function sendsIn(phaseId) {
     return state.run.cluster.trace.filter(function (e) { return e.type === 'send' && e.phase === phaseId; });
@@ -142,27 +150,34 @@
 
     var sends = sendsIn('scatter');
     var cards = state.run.cluster.workers.map(function (worker, w) {
-      var mine = sends.filter(function (e) { return e.from === w && e.payload.indexOf('FREQ') === 0; });
+      var mine = sends.filter(function (e) { return e.from === w; });
+      var pairTotal = 0;
       var items = mine.map(function (e) {
-        return h('li', null, [h('code', { text: e.payload }), h('span', { class: 'arrow', text: '→' }), badge(e.to)]);
+        var pairs = parsePairs(e.payload);
+        pairTotal += pairs.length;
+        var parts = [h('code', { text: 'FREQ' })];
+        if (pairs.length) pairs.forEach(function (pr) { parts.push(h('span', { class: 'pair', text: pr[0] + ' ' + pr[1] })); });
+        else parts.push(h('span', { class: 'muted', text: '(empty)' }));
+        parts.push(h('span', { class: 'arrow', text: '→' }), badge(e.to));
+        return h('li', null, parts);
       });
-      items.push(h('li', null, [h('code', { text: 'SCATTER_END' }), h('span', { class: 'arrow', text: '→' }), h('span', { class: 'muted', text: 'all ' + k + ' workers' })]));
-      return workerCard(w, 'sends ' + plural(mine.length + k, 'message'), [h('ul', { class: 'msgs' }, items)]);
+      return workerCard(w, 'sends ' + plural(mine.length, 'message') + ' · ' + plural(pairTotal, 'pair'), [h('ul', { class: 'msgs' }, items)]);
     });
 
+    // Every owner receives exactly k messages now, so balance is measured in
+    // pairs (and bytes) received, which is where hash skew actually shows.
     var received = [];
-    for (var w = 0; w < k; w++) received.push({ w: w, freq: 0, end: 0 });
-    sends.forEach(function (e) { if (e.payload.indexOf('FREQ') === 0) received[e.to].freq++; else received[e.to].end++; });
-    var maxRecv = Math.max.apply(null, received.map(function (r) { return r.freq + r.end; }));
+    for (var w = 0; w < k; w++) received.push({ w: w, pairs: 0, bytes: 0 });
+    sends.forEach(function (e) { received[e.to].pairs += parsePairs(e.payload).length; received[e.to].bytes += e.payload.length; });
+    var maxPairs = Math.max(1, Math.max.apply(null, received.map(function (r) { return r.pairs; })));
     var bars = h('div', { class: 'bars' }, [].concat.apply([], received.map(function (r) {
-      var total = r.freq + r.end;
       return [
         badge(r.w),
-        h('div', null, [h('div', { class: 'bar', style: wStyle(r.w) + '; width: ' + (100 * total / maxRecv) + '%' })]),
-        h('span', { class: 'val', text: total + ' (' + r.freq + ' FREQ + ' + r.end + ' END)' })
+        h('div', null, [h('div', { class: 'bar', style: wStyle(r.w) + '; width: ' + (100 * r.pairs / maxPairs) + '%' })]),
+        h('span', { class: 'val', text: plural(r.pairs, 'pair') + ' · ' + r.bytes + ' B' })
       ];
     })));
-    var skewNote = h('p', { class: 'muted small', text: 'Messages received per worker. A lopsided chart means the hash partition is skewed — try the “Skewed” preset.' });
+    var skewNote = h('p', { class: 'muted small', text: '(value, count) pairs received per owner — each owner gets exactly ' + k + ' messages, so this is where hash skew shows. A lopsided chart means the partition is unbalanced; try the “Skewed” preset.' });
 
     return [legend, h('div', { class: 'workers' }, cards), h('div', { class: 'section' }, [h('h4', { text: 'Shuffle balance' }), bars, skewNote])];
   }
@@ -176,7 +191,7 @@
     var cards = state.run.cluster.workers.map(function (worker, w) {
       var entries = sortedEntries(worker.aggFreq);
       var freqCount = entries.length;
-      var meta = 'in: ' + freqCount + ' FREQ, ' + k + ' END';
+      var meta = 'in: ' + plural(k, 'batch', 'es') + ' · ' + plural(freqCount, 'pair');
       if (!entries.length) {
         return workerCard(w, meta, [h('p', { class: 'empty', text: 'owns no values — will send only MODE_END' })]);
       }
@@ -261,40 +276,112 @@
     if (cursor === 0) els.mailbox.appendChild(h('li', { class: 'cursor-label', text: '▼ unread from here' }));
     box.forEach(function (e, i) {
       var li = h('li', { class: (i >= cursor ? 'unread' : '') + (i === cursor - 1 ? ' cursor' : '') }, [
-        h('span', { class: 'idx', text: i }), badge(e.from), h('span', { text: e.payload })
+        h('span', { class: 'idx', text: i }), badge(e.from), h('span', { text: e.payload }),
+        e.payload === 'FREQ ' ? h('span', { class: 'muted', text: '(empty batch)' }) : null
       ]);
       els.mailbox.appendChild(li);
       if (i === cursor - 1 && cursor < box.length) els.mailbox.appendChild(h('li', { class: 'cursor-label', text: '▲ read so far · ▼ unread' }));
     });
   }
 
+  // Naive baseline: every other worker ships its raw shard to worker 0.
+  function naiveCost(shards) {
+    var bytes = 0, raw = 0, msgs = 0;
+    shards.forEach(function (shard, w) { if (w > 0 && shard.length) { msgs++; bytes += shard.join(' ').length; raw += shard.length; } });
+    return { msgs: msgs, bytes: bytes, raw: raw };
+  }
+
+  // Model this dataset's value mix at a larger n: every worker holds every
+  // distinct value in proportion, batches one FREQ per owner, owners report
+  // to W0. Returns projected message and byte totals for the shuffle and for
+  // the naive baseline.
+  function project(N) {
+    var k = state.k, n = state.data.length;
+    var counts = new Map();
+    state.data.forEach(function (v) { counts.set(v, (counts.get(v) || 0) + 1); });
+    var perWorker = new Map();   // value -> count held by ONE worker at scale N
+    counts.forEach(function (c, v) { perWorker.set(v, Math.max(1, Math.round(c * N / n / k))); });
+
+    var bytes = 0, msgs = 0;
+    for (var w = 0; w < k; w++) {
+      for (var o = 0; o < k; o++) {
+        var parts = [];
+        perWorker.forEach(function (c, v) { if (CM.mod(v, k) === o) parts.push(v + ' ' + c); });
+        bytes += ('FREQ ' + parts.join(' ')).length; msgs++;
+      }
+    }
+    // Report phase: each owner with values sends its (mode, global count).
+    var ownerBest = new Map();
+    perWorker.forEach(function (c, v) {
+      var o = CM.mod(v, k), g = c * k, cur = ownerBest.get(o);
+      if (!cur || g > cur[1] || (g === cur[1] && v < cur[0])) ownerBest.set(o, [v, g]);
+    });
+    for (var r = 1; r < k; r++) {
+      var b = ownerBest.get(r);
+      if (b) { bytes += ('MODE ' + b[0] + ' ' + b[1]).length; msgs++; }
+      bytes += 'MODE_END'.length; msgs++;
+    }
+    var avgLen = 0;
+    counts.forEach(function (c, v) { avgLen += c * String(v).length; });
+    avgLen /= n;
+    var others = N - Math.ceil(N / k);
+    var naiveBytes = k > 1 ? Math.round(others * (avgLen + 1) - (k - 1)) : 0;
+    return { msgs: msgs, bytes: bytes, naiveMsgs: Math.max(k - 1, 0), naiveBytes: naiveBytes };
+  }
+
   function renderStats() {
     var run = state.run, k = state.k, n = state.data.length;
     var sends = run.cluster.trace.filter(function (e) { return e.type === 'send'; });
-    var freq = sends.filter(function (e) { return e.payload.indexOf('FREQ') === 0; }).length;
+    var scatter = sends.filter(function (e) { return e.phase === 'scatter'; });
+    var report = sends.filter(function (e) { return e.phase !== 'scatter'; });
     var bytes = sends.reduce(function (s, e) { return s + e.payload.length; }, 0);
-    var perWorker = {}; sends.forEach(function (e) { perWorker[e.to] = (perWorker[e.to] || 0) + 1; });
-    var maxIn = Math.max.apply(null, Object.keys(perWorker).map(function (w) { return perWorker[w]; }));
+    var reportBytes = report.reduce(function (s, e) { return s + e.payload.length; }, 0);
 
-    // Naive baseline: every other worker ships its raw shard to worker 0.
-    var naiveBytes = 0, naiveRaw = 0;
-    run.cluster.shards.forEach(function (shard, w) { if (w > 0) { naiveBytes += shard.join(' ').length; naiveRaw += shard.length; } });
+    var pairs = 0, pairsPerOwner = {}, unbatchedScatterBytes = 0;
+    scatter.forEach(function (e) {
+      var ps = parsePairs(e.payload);
+      pairs += ps.length;
+      pairsPerOwner[e.to] = (pairsPerOwner[e.to] || 0) + ps.length;
+      // The previous wire format: one 'FREQ v c' per pair.
+      ps.forEach(function (pr) { unbatchedScatterBytes += ('FREQ ' + pr[0] + ' ' + pr[1]).length; });
+    });
+    var maxPairs = Math.max.apply(null, [0].concat(Object.keys(pairsPerOwner).map(function (w) { return pairsPerOwner[w]; })));
+    // ...plus a SCATTER_END broadcast from every worker to every worker.
+    var unbatchedMsgs = pairs + k * k + report.length;
+    var unbatchedBytes = unbatchedScatterBytes + k * k * 'SCATTER_END'.length + reportBytes;
+    var naive = naiveCost(run.cluster.shards);
 
     var rows = [
-      ['', 'this run', 'naive'],
-      ['raw values leaving their worker', '0', String(naiveRaw)],
-      ['(value, count) pairs shuffled', String(freq), '—'],
-      ['messages', String(sends.length), String(Math.max(k - 1, 0))],
-      ['payload bytes', String(bytes), String(naiveBytes)],
-      ['most messages into one worker', String(maxIn), String(Math.max(k - 1, 0))]
+      ['', 'batched', 'unbatched', 'naive'],
+      ['messages', fmtNum(sends.length), fmtNum(unbatchedMsgs), fmtNum(naive.msgs)],
+      ['bytes', fmtNum(bytes), fmtNum(unbatchedBytes), fmtNum(naive.bytes)],
+      ['pairs', fmtNum(pairs), fmtNum(pairs), '—'],
+      ['raw values out', '0', '0', fmtNum(naive.raw)],
+      ['max per owner', fmtNum(maxPairs), fmtNum(maxPairs), '—']
     ];
     els.netStats.innerHTML = '';
-    var grid = h('div', { class: 'stats' });
+    var grid = h('div', { class: 'stats stats-4' });
     rows.forEach(function (r, i) {
       r.forEach(function (c, j) { grid.appendChild(h('div', { class: (i === 0 || j === 0 ? 'h ' : '') + (j > 0 ? 'r' : ''), text: c })); });
     });
     els.netStats.appendChild(grid);
-    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Naive = every worker ships its raw slice to W0. At n ≤ ' + MAX_N + ' the per-message overhead dominates. The point of the shuffle is that its traffic scales with the number of distinct values, not with n, and no worker ever sees another worker’s raw data.' }));
+    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Batched = this run: one FREQ message per owner, ' + k + '\u00b2 = ' + (k * k) + ' scatter messages however large the data. Unbatched = the same run with one message per pair plus ' + (k * k) + ' SCATTER_END markers (the previous encoding). Naive = every worker ships its raw slice to W0. Pairs = (value, count) pairs shuffled; raw values out = data items that leave the worker holding them; max per owner = pairs landing on the busiest owner.' }));
+
+    // Projection block
+    var sizes = [1000, 100000, 1000000];
+    var head = h('tr', null, [h('th', { text: 'n' }), h('th', { text: 'shuffle msgs', class: 'num' }), h('th', { text: 'shuffle bytes', class: 'num' }), h('th', { text: 'naive bytes', class: 'num' })]);
+    var body = [h('tr', { class: 'best' }, [h('td', { class: 'nowrap', text: fmtNum(n) + ' (this run)' }), h('td', { class: 'num', text: fmtNum(sends.length) }), h('td', { class: 'num', text: fmtNum(bytes) }), h('td', { class: 'num', text: fmtNum(naive.bytes) })])];
+    sizes.forEach(function (N) {
+      if (N <= n) return;
+      var pj = project(N);
+      body.push(h('tr', null, [h('td', { text: fmtNum(N) }), h('td', { class: 'num', text: fmtNum(pj.msgs) }), h('td', { class: 'num', text: fmtNum(pj.bytes) }), h('td', { class: 'num', text: fmtNum(pj.naiveBytes) })]));
+    });
+    var distinct = new Set(state.data).size;
+    els.netStats.appendChild(h('div', { class: 'section' }, [
+      h('h4', { text: 'Projection — same value mix, more data' }),
+      h('table', { class: 'proj' }, [h('thead', null, [head]), h('tbody', null, body)]),
+      h('p', { class: 'muted small', text: 'Assumes the ' + plural(distinct, 'distinct value') + ' above keep their proportions as n grows. Shuffle traffic grows with the number of distinct values (their counts just gain digits); naive traffic grows with n. Data with many rarely repeated values narrows the gap.' })
+    ]));
   }
 
   // ---- top-level render ----------------------------------------------------

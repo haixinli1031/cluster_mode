@@ -8,13 +8,15 @@ The algorithm is a hash-partitioned frequency shuffle:
 
 1. **Partition** — the dataset is split evenly across `k` workers.
 2. **Local count** — each worker counts its own slice into `{value: count}`.
-3. **Scatter by hash** — every `(value, count)` pair is sent to the value's
-   *owner*, `owner = value mod k`, as `FREQ value count`. Each worker then
-   broadcasts `SCATTER_END` to all `k` workers.
-4. **Aggregate** — each owner reads its mailbox until it has seen `k`
-   `SCATTER_END`s, summing counts. Because every occurrence of a value lands on
-   the same owner, the owner now holds that value's exact global count. It
-   picks its local mode (smallest value on a tie).
+3. **Scatter by hash** — every `(value, count)` pair belongs to the value's
+   *owner*, `owner = value mod k`. Each worker groups its pairs by owner and
+   sends **one** `FREQ value count value count …` message per owner — sent even
+   when the batch is empty (`FREQ `), so every owner receives exactly `k`
+   scatter messages.
+4. **Aggregate** — each owner reads its mailbox until it has received `k`
+   `FREQ` batches, summing the counts inside them. Because every occurrence of
+   a value lands on the same owner, the owner now holds that value's exact
+   global count. It picks its local mode (smallest value on a tie).
 5. **Report** — workers `1..k-1` send `MODE value count` and `MODE_END` to
    worker 0.
 6. **Result** — worker 0 waits for `k-1` `MODE_END`s and keeps the highest
@@ -48,10 +50,14 @@ No build step, no server-side code.
   arrow keys. *Skip to result* jumps to the last phase.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
-- **Network** compares this run's traffic to the naive "ship every slice to
-  worker 0" approach. At ≤ 50 values the per-message overhead dominates; the
-  point is that shuffle traffic scales with the number of *distinct* values,
-  not with `n`, and raw data never leaves its worker.
+- **Network** compares three encodings of the same run: *batched* (this
+  implementation, one `FREQ` per owner, so the scatter is always `k²`
+  messages), *unbatched* (the same pairs sent one message each plus `k²`
+  `SCATTER_END` markers — the previous encoding), and *naive* (every worker
+  ships its raw slice to worker 0). At ≤ 50 values naive still wins on bytes,
+  so a **projection** block models the current value mix at n = 1,000,
+  100,000 and 1,000,000: shuffle traffic grows with the number of *distinct*
+  values, naive traffic grows with `n`, and raw data never leaves its worker.
 
 ## Files
 
@@ -66,9 +72,11 @@ No build step, no server-side code.
 
 ## Notes on the protocol
 
-- Payloads are plain strings: `FREQ <value> <count>`, `SCATTER_END`,
-  `MODE <value> <count>`, `MODE_END`. The two end markers are distinct so each
-  phase can only be terminated by its own signal.
+- Payloads are plain strings: `FREQ <value> <count> [<value> <count> …]` (one
+  per worker→owner pair, empty batches included), `MODE <value> <count>`,
+  `MODE_END`. The k-th `FREQ` an owner receives is its end-of-scatter marker;
+  the report phase has its own `MODE_END` so the two phases cannot be
+  confused.
 - `Cluster.findMode` runs the phases strictly in order (all scatters, then all
   aggregates, …), so every message a phase waits for is already in the mailbox
   when it starts. The wait loops treat an empty `receive()` (`""`) as
