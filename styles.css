@@ -221,6 +221,17 @@ tr.best td { background: var(--hilite); font-weight: 700; }
 .mailbox li.cursor { border-bottom: 2px solid var(--accent); }
 .mailbox li.cursor-label { color: var(--accent); font-family: inherit; font-size: 0.78rem; border: 0; }
 
+/* Mailbox legend + decoder */
+.legend-box { margin: 6px 0 4px; font-size: 0.85rem; }
+.legend-box summary { cursor: pointer; color: var(--accent); }
+.legend-box dl { margin: 6px 0 0; }
+.legend-box dt { margin-top: 6px; }
+.legend-box dd { margin: 2px 0 0; color: var(--ink-2); }
+.mailbox li { cursor: default; }
+.mailbox li:hover, .mailbox li:focus-visible { background: var(--hilite); outline: none; }
+.decode { min-height: 2.6em; margin: 8px 0 0; padding: 6px 8px; border-left: 3px solid var(--accent); background: var(--page); border-radius: 0 6px 6px 0; }
+.decode.active { color: var(--ink); }
+
 /* Stats */
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
 .stats-4 { grid-template-columns: 1fr auto auto auto; gap: 4px 8px; }

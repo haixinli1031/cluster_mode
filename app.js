@@ -24,7 +24,7 @@
     prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), skipBtn: $('skipBtn'), phaseList: $('phaseList'),
     runBtn: $('runBtn'), bannerRun: $('bannerRun'), revertBtn: $('revertBtn'), staleBanner: $('staleBanner'), staleText: $('staleText'), layout: $('layout'),
     phaseTitle: $('phaseTitle'), phaseBlurb: $('phaseBlurb'), stage: $('stage'),
-    mailboxTabs: $('mailboxTabs'), mailbox: $('mailbox'), netStats: $('netStats')
+    mailboxTabs: $('mailboxTabs'), mailbox: $('mailbox'), mailboxDecode: $('mailboxDecode'), netStats: $('netStats')
   };
 
   // ---- tiny DOM helper -----------------------------------------------------
@@ -254,6 +254,27 @@
   var RENDER = { partition: renderPartition, count: renderCount, scatter: renderScatter, aggregate: renderAggregate, report: renderReport, result: renderResult };
 
   // ---- side panels ---------------------------------------------------------
+  // Plain-English reading of one raw payload, for the decoder line.
+  function decodeMessage(e, to) {
+    var k = state.k;
+    if (e.payload.indexOf('FREQ') === 0) {
+      var pairs = parsePairs(e.payload);
+      if (!pairs.length) return 'Empty batch from W' + e.from + ' \u2192 W' + to + ': W' + e.from + ' holds no values that W' + to + ' owns. Still sent, and still one of the ' + k + ' batches W' + to + ' waits for.';
+      var list = pairs.map(function (pr) { return pr[0] + ' \u00d7' + pr[1]; }).join(', ');
+      return 'Batch from W' + e.from + ' \u2192 W' + to + ': ' + list + ' \u2014 W' + e.from + '\u2019s local counts for the ' + plural(pairs.length, 'value') + ' that W' + to + ' owns (value mod ' + k + ' = ' + to + ').';
+    }
+    if (e.payload.indexOf('MODE ') === 0) {
+      var d = e.payload.split(' ');
+      return 'W' + e.from + ' reports its local mode to W0: value ' + d[1] + ' with global count ' + d[2] + '. W0 keeps the highest count, smallest value.';
+    }
+    if (e.payload === 'MODE_END') return 'W' + e.from + ' has finished reporting. W0 waits for k \u2212 1 = ' + (k - 1) + ' of these before deciding.';
+    return e.payload;
+  }
+  function setDecode(text, active) {
+    els.mailboxDecode.textContent = text;
+    els.mailboxDecode.classList.toggle('active', !!active);
+  }
+
   function renderMailbox() {
     var phaseId = PHASES[state.phase].id;
     var view = mailboxView(phaseId);
@@ -271,11 +292,17 @@
     }
 
     var box = view.boxes[state.mailboxWorker], cursor = view.cursors[state.mailboxWorker];
+    var to = state.mailboxWorker;
     els.mailbox.innerHTML = '';
+    setDecode(box.length ? 'Hover or tap a message to decode it.' : 'No messages yet in this phase.', false);
     if (!box.length) { els.mailbox.appendChild(h('li', { class: 'empty', text: 'empty' })); return; }
     if (cursor === 0) els.mailbox.appendChild(h('li', { class: 'cursor-label', text: '▼ unread from here' }));
     box.forEach(function (e, i) {
-      var li = h('li', { class: (i >= cursor ? 'unread' : '') + (i === cursor - 1 ? ' cursor' : '') }, [
+      var explain = function () { setDecode(decodeMessage(e, to), true); };
+      var li = h('li', {
+        class: (i >= cursor ? 'unread' : '') + (i === cursor - 1 ? ' cursor' : ''), tabindex: '0',
+        onmouseenter: explain, onfocus: explain, onclick: explain
+      }, [
         h('span', { class: 'idx', text: i }), badge(e.from), h('span', { text: e.payload }),
         e.payload === 'FREQ ' ? h('span', { class: 'muted', text: '(empty batch)' }) : null
       ]);

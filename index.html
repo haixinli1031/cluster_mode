@@ -68,8 +68,20 @@
         <section class="card">
           <h3>Mailboxes</h3>
           <p class="muted small">Raw payload strings as each worker sees them. The cursor marks how far the worker has read at the end of this phase.</p>
+          <details class="legend-box">
+            <summary>Message format</summary>
+            <dl>
+              <dt><code>FREQ v c v c …</code></dt>
+              <dd>Scatter batch from one worker to one owner: every (value, count) pair the sender holds for values that owner owns. One per worker → owner, so each owner receives exactly k of them. <code>FREQ</code> alone is an empty batch — still sent, still counted.</dd>
+              <dt><code>MODE v c</code></dt>
+              <dd>An owner's local mode <code>v</code> and its global count <code>c</code>, reported to W0.</dd>
+              <dt><code>MODE_END</code></dt>
+              <dd>End of an owner's report. W0 waits for k − 1 of these.</dd>
+            </dl>
+          </details>
           <div id="mailboxTabs" class="tabs" role="tablist"></div>
           <ol id="mailbox" class="mailbox"></ol>
+          <p id="mailboxDecode" class="decode muted small">Hover or tap a message to decode it.</p>
         </section>
         <section class="card">
           <h3>Network</h3>
