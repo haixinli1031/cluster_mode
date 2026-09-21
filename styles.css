@@ -243,6 +243,7 @@ tr.best td { background: var(--hilite); font-weight: 700; }
 
 /* Stats */
 .stats { display: grid; grid-template-columns: 1fr auto auto; gap: 4px 10px; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+.stats-2 { grid-template-columns: 1fr auto; }
 .proj th, .proj td { padding: 3px 4px; font-size: 0.85rem; }
 .nowrap { white-space: nowrap; }
 .pair { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 0 5px; border-radius: 4px; background: var(--hair); }

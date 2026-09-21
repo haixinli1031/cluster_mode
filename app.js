@@ -383,17 +383,9 @@
     });
   }
 
-  // Naive baseline: every other worker ships its raw shard to worker 0.
-  function naiveCost(shards) {
-    var bytes = 0, raw = 0, msgs = 0;
-    shards.forEach(function (shard, w) { if (w > 0 && shard.length) { msgs++; bytes += shard.join(' ').length; raw += shard.length; } });
-    return { msgs: msgs, bytes: bytes, raw: raw };
-  }
-
   // Model this dataset's value mix at a larger n: every worker holds every
   // distinct value in proportion, batches one FREQ per owner, owners report
-  // to W0. Returns projected message and byte totals for the shuffle and for
-  // the naive baseline.
+  // to W0. Returns projected message and byte totals.
   function project(N) {
     var k = state.k, n = state.data.length;
     var counts = new Map();
@@ -420,12 +412,7 @@
       if (b) { bytes += ('MODE ' + b[0] + ' ' + b[1]).length; msgs++; }
       bytes += 'MODE_END'.length; msgs++;
     }
-    var avgLen = 0;
-    counts.forEach(function (c, v) { avgLen += c * String(v).length; });
-    avgLen /= n;
-    var others = N - Math.ceil(N / k);
-    var naiveBytes = k > 1 ? Math.round(others * (avgLen + 1) - (k - 1)) : 0;
-    return { msgs: msgs, bytes: bytes, naiveMsgs: Math.max(k - 1, 0), naiveBytes: naiveBytes };
+    return { msgs: msgs, bytes: bytes };
   }
 
   function renderStats() {
@@ -441,38 +428,36 @@
       pairsPerOwner[e.to] = (pairsPerOwner[e.to] || 0) + ps.length;
     });
     var maxPairs = Math.max.apply(null, [0].concat(Object.keys(pairsPerOwner).map(function (w) { return pairsPerOwner[w]; })));
-    var naive = naiveCost(run.cluster.shards);
-
     var rows = [
-      ['', 'shuffle', 'naive'],
-      ['messages', fmtNum(sends.length), fmtNum(naive.msgs)],
-      ['bytes', fmtNum(bytes), fmtNum(naive.bytes)],
-      ['pairs shuffled', fmtNum(pairs), '—'],
-      ['raw values out', '0', fmtNum(naive.raw)],
-      ['max pairs / owner', fmtNum(maxPairs), '—']
+      ['messages', fmtNum(sends.length)],
+      ['payload bytes', fmtNum(bytes)],
+      ['(value, count) pairs shuffled', fmtNum(pairs)],
+      ['raw values leaving their worker', '0'],
+      ['max pairs into one owner', fmtNum(maxPairs)]
     ];
     els.netStats.innerHTML = '';
-    var grid = h('div', { class: 'stats' });
-    rows.forEach(function (r, i) {
-      r.forEach(function (c, j) { grid.appendChild(h('div', { class: (i === 0 || j === 0 ? 'h ' : '') + (j > 0 ? 'r' : ''), text: c })); });
+    var grid = h('div', { class: 'stats stats-2' });
+    rows.forEach(function (r) {
+      grid.appendChild(h('div', { class: 'h', text: r[0] }));
+      grid.appendChild(h('div', { class: 'r', text: r[1] }));
     });
     els.netStats.appendChild(grid);
-    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Shuffle = this run: one FREQ message per worker \u2192 owner, so the scatter is always ' + k + '\u00b2 = ' + (k * k) + ' messages however large the data, plus the reports to W0. Naive = every worker ships its raw slice to W0. Raw values out = data items that leave the worker holding them; max pairs / owner = pairs landing on the busiest owner.' }));
+    els.netStats.appendChild(h('p', { class: 'muted small', text: 'One FREQ message per worker \u2192 owner, so the scatter is always ' + k + '\u00b2 = ' + (k * k) + ' messages however large the data, plus the reports to W0. Only (value, count) pairs travel: no worker ever receives another worker\u2019s raw data. Max pairs into one owner shows how evenly the hash spreads the load.' }));
 
     // Projection block
     var sizes = [1000, 100000, 1000000];
-    var head = h('tr', null, [h('th', { text: 'n' }), h('th', { text: 'shuffle msgs', class: 'num' }), h('th', { text: 'shuffle bytes', class: 'num' }), h('th', { text: 'naive bytes', class: 'num' })]);
-    var body = [h('tr', { class: 'best' }, [h('td', { class: 'nowrap', text: fmtNum(n) + ' (this run)' }), h('td', { class: 'num', text: fmtNum(sends.length) }), h('td', { class: 'num', text: fmtNum(bytes) }), h('td', { class: 'num', text: fmtNum(naive.bytes) })])];
+    var head = h('tr', null, [h('th', { text: 'n' }), h('th', { text: 'messages', class: 'num' }), h('th', { text: 'payload bytes', class: 'num' }), h('th', { text: 'bytes / value', class: 'num' })]);
+    var body = [h('tr', { class: 'best' }, [h('td', { class: 'nowrap', text: fmtNum(n) + ' (this run)' }), h('td', { class: 'num', text: fmtNum(sends.length) }), h('td', { class: 'num', text: fmtNum(bytes) }), h('td', { class: 'num', text: (bytes / n).toFixed(2) })])];
     sizes.forEach(function (N) {
       if (N <= n) return;
       var pj = project(N);
-      body.push(h('tr', null, [h('td', { text: fmtNum(N) }), h('td', { class: 'num', text: fmtNum(pj.msgs) }), h('td', { class: 'num', text: fmtNum(pj.bytes) }), h('td', { class: 'num', text: fmtNum(pj.naiveBytes) })]));
+      body.push(h('tr', null, [h('td', { text: fmtNum(N) }), h('td', { class: 'num', text: fmtNum(pj.msgs) }), h('td', { class: 'num', text: fmtNum(pj.bytes) }), h('td', { class: 'num', text: (pj.bytes / N).toFixed(pj.bytes / N < 0.01 ? 4 : 2) })]));
     });
     var distinct = new Set(state.data).size;
     els.netStats.appendChild(h('div', { class: 'section' }, [
       h('h4', { text: 'Projection — same value mix, more data' }),
       h('table', { class: 'proj' }, [h('thead', null, [head]), h('tbody', null, body)]),
-      h('p', { class: 'muted small', text: 'Assumes the ' + plural(distinct, 'distinct value') + ' above keep their proportions as n grows. Shuffle traffic grows with the number of distinct values (their counts just gain digits); naive traffic grows with n. Data with many rarely repeated values narrows the gap.' })
+      h('p', { class: 'muted small', text: 'Assumes the ' + plural(distinct, 'distinct value') + ' above keep their proportions as n grows. Messages never change; bytes grow only with the number of distinct values (their counts gain digits), so the cost per value falls toward zero. Data with many rarely repeated values keeps bytes closer to n.' })
     ]));
   }
 

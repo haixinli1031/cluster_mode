@@ -55,13 +55,14 @@ No build step, no server-side code.
   that collapse are sorted by count so the rows that matter stay visible.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
-- **Network** compares this run's shuffle (one `FREQ` per worker → owner, so
-  the scatter is always `k²` messages) with the naive approach (every worker
-  ships its raw slice to worker 0). At the app's scale naive still wins on
-  bytes, so a **projection** block models the current value mix at
-  n = 1,000, 100,000 and 1,000,000: shuffle traffic grows with the number of
-  *distinct* values, naive traffic grows with `n`, and raw data never leaves
-  its worker.
+- **Network** reports this run's traffic: messages (always `k²` for the
+  scatter, plus the reports to worker 0), payload bytes, pairs shuffled, raw
+  values leaving their worker (always 0) and the busiest owner's share. A
+  **projection** block models the current value mix at n = 1,000, 100,000
+  and 1,000,000: messages never change and bytes grow only with the number
+  of *distinct* values, so the cost per value falls toward zero. There is
+  deliberately no "ship everything to one worker" baseline — that would let
+  one worker see all the data, which the problem forbids.
 
 ## Files
 
