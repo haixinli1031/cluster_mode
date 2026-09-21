@@ -92,3 +92,47 @@ No build step, no server-side code.
   values still map into `[0, k)`.
 - `value mod k` is a deliberately simple partitioner; the *Skewed* preset shows
   how badly it can balance. A real deployment would use a mixing hash.
+
+## Key design decisions and trade-offs
+
+1. **Hash shuffle, not "all counts → W0".** Both keep raw data on its
+   worker, but sending every local count table to one worker makes W0 the
+   bottleneck: its merge work and memory grow with `k × D`. Partitioning by
+   `value mod k` spreads that over `k` owners at the cost of `k²` scatter
+   messages and slightly more bytes. The Network panel shows both sides of
+   that trade honestly; the gap is capped by the number of distinct values.
+2. **Batched scatter.** One `FREQ` message per worker → owner instead of one
+   per pair. Message count becomes independent of `n` and the batch itself
+   is the end-of-scatter marker, so the separate `SCATTER_END` broadcast went
+   away. Empty batches are still sent — that is what makes "k batches
+   received" a reliable termination condition.
+3. **Distinct phase markers.** The original solution reused `"END"` for both
+   phases and relied on strict sequential scheduling. `FREQ` batches and
+   `MODE_END` are distinct so each phase can only be ended by its own signal.
+4. **`value mod k` kept as the partitioner.** It is the simplest thing that
+   demonstrates hash partitioning, and its weakness is a teaching point: the
+   *Skewed* preset shows all keys landing on W0. Production code would use a
+   mixing hash. JS uses a Python-style `mod` so negative keys still land in
+   `[0, k)`.
+5. **Two implementations kept in lockstep.** `cluster_mode.py` is the
+   reference; `cluster.js` is a line-for-line port with a trace hook the UI
+   replays. Both run the same randomized and corner-case tests, so the
+   browser cannot silently drift from the Python.
+6. **Static site, no backend.** Plain HTML/CSS/JS with no build step means
+   "open the file" or GitHub Pages is the whole deployment. The price is
+   re-implementing the algorithm in JS (mitigated by point 5).
+7. **Explicit Run instead of live updates.** Input changes mark the page stale
+   and lock navigation until Run recomputes from step 1. Slightly more
+   friction, no more silently swapped visualizations mid-walkthrough.
+8. **No naive baseline.** "Ship every slice to W0" was dropped from the
+   Network panel because it lets one worker see all the data — it violates
+   the problem, so it is not a comparable alternative.
+9. **Projection over measurement at scale.** At ≤ 1,000 values the numbers
+   cannot show what happens at millions, so the At-scale block models the
+   run's own value mix (verified to reproduce a real run exactly) and, via
+   the `D` slider, a synthetic uniform mix. The assumptions are stated in the
+   UI rather than hidden.
+10. **Adaptive detail instead of virtualization.** Panels collapse behind
+    "+N more" past readable limits, which keeps a 1,000-value run under a few
+    hundred DOM nodes. Going well beyond 1,000 would need virtualized lists —
+    a different tier of work, deliberately not taken on.
