@@ -76,6 +76,7 @@ No build step, no server-side code.
 | `test_cluster_mode.py` | `python3 test_cluster_mode.py` — fixed cases + 3,000 randomized cases vs. a brute force. |
 | `cluster.test.js` | `node cluster.test.js` — the same checks for the JS port, plus trace sanity checks. |
 | `.github/workflows/pages.yml` | Runs both test files, then deploys to GitHub Pages. |
+| `DESIGN_RATIONALE.md` | Why this artifact, what makes it non-obvious, key trade-offs, and what would come next. |
 
 ## Notes on the protocol
 
