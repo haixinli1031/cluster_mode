@@ -360,39 +360,32 @@
     var run = state.run, k = state.k, n = state.data.length;
     var sends = run.cluster.trace.filter(function (e) { return e.type === 'send'; });
     var scatter = sends.filter(function (e) { return e.phase === 'scatter'; });
-    var report = sends.filter(function (e) { return e.phase !== 'scatter'; });
     var bytes = sends.reduce(function (s, e) { return s + e.payload.length; }, 0);
-    var reportBytes = report.reduce(function (s, e) { return s + e.payload.length; }, 0);
 
-    var pairs = 0, pairsPerOwner = {}, unbatchedScatterBytes = 0;
+    var pairs = 0, pairsPerOwner = {};
     scatter.forEach(function (e) {
       var ps = parsePairs(e.payload);
       pairs += ps.length;
       pairsPerOwner[e.to] = (pairsPerOwner[e.to] || 0) + ps.length;
-      // The previous wire format: one 'FREQ v c' per pair.
-      ps.forEach(function (pr) { unbatchedScatterBytes += ('FREQ ' + pr[0] + ' ' + pr[1]).length; });
     });
     var maxPairs = Math.max.apply(null, [0].concat(Object.keys(pairsPerOwner).map(function (w) { return pairsPerOwner[w]; })));
-    // ...plus a SCATTER_END broadcast from every worker to every worker.
-    var unbatchedMsgs = pairs + k * k + report.length;
-    var unbatchedBytes = unbatchedScatterBytes + k * k * 'SCATTER_END'.length + reportBytes;
     var naive = naiveCost(run.cluster.shards);
 
     var rows = [
-      ['', 'batched', 'unbatched', 'naive'],
-      ['messages', fmtNum(sends.length), fmtNum(unbatchedMsgs), fmtNum(naive.msgs)],
-      ['bytes', fmtNum(bytes), fmtNum(unbatchedBytes), fmtNum(naive.bytes)],
-      ['pairs', fmtNum(pairs), fmtNum(pairs), '—'],
-      ['raw values out', '0', '0', fmtNum(naive.raw)],
-      ['max per owner', fmtNum(maxPairs), fmtNum(maxPairs), '—']
+      ['', 'shuffle', 'naive'],
+      ['messages', fmtNum(sends.length), fmtNum(naive.msgs)],
+      ['bytes', fmtNum(bytes), fmtNum(naive.bytes)],
+      ['pairs shuffled', fmtNum(pairs), '—'],
+      ['raw values out', '0', fmtNum(naive.raw)],
+      ['max pairs / owner', fmtNum(maxPairs), '—']
     ];
     els.netStats.innerHTML = '';
-    var grid = h('div', { class: 'stats stats-4' });
+    var grid = h('div', { class: 'stats' });
     rows.forEach(function (r, i) {
       r.forEach(function (c, j) { grid.appendChild(h('div', { class: (i === 0 || j === 0 ? 'h ' : '') + (j > 0 ? 'r' : ''), text: c })); });
     });
     els.netStats.appendChild(grid);
-    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Batched = this run: one FREQ message per owner, ' + k + '\u00b2 = ' + (k * k) + ' scatter messages however large the data. Unbatched = the same run with one message per pair plus ' + (k * k) + ' SCATTER_END markers (the previous encoding). Naive = every worker ships its raw slice to W0. Pairs = (value, count) pairs shuffled; raw values out = data items that leave the worker holding them; max per owner = pairs landing on the busiest owner.' }));
+    els.netStats.appendChild(h('p', { class: 'muted small', text: 'Shuffle = this run: one FREQ message per worker \u2192 owner, so the scatter is always ' + k + '\u00b2 = ' + (k * k) + ' messages however large the data, plus the reports to W0. Naive = every worker ships its raw slice to W0. Raw values out = data items that leave the worker holding them; max pairs / owner = pairs landing on the busiest owner.' }));
 
     // Projection block
     var sizes = [1000, 100000, 1000000];

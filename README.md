@@ -50,14 +50,13 @@ No build step, no server-side code.
   arrow keys. *Skip to result* jumps to the last phase.
 - **Mailboxes** shows each worker's raw payload strings and how far it has
   read at the end of the current phase.
-- **Network** compares three encodings of the same run: *batched* (this
-  implementation, one `FREQ` per owner, so the scatter is always `k²`
-  messages), *unbatched* (the same pairs sent one message each plus `k²`
-  `SCATTER_END` markers — the previous encoding), and *naive* (every worker
-  ships its raw slice to worker 0). At ≤ 50 values naive still wins on bytes,
-  so a **projection** block models the current value mix at n = 1,000,
-  100,000 and 1,000,000: shuffle traffic grows with the number of *distinct*
-  values, naive traffic grows with `n`, and raw data never leaves its worker.
+- **Network** compares this run's shuffle (one `FREQ` per worker → owner, so
+  the scatter is always `k²` messages) with the naive approach (every worker
+  ships its raw slice to worker 0). At ≤ 50 values naive still wins on
+  bytes, so a **projection** block models the current value mix at
+  n = 1,000, 100,000 and 1,000,000: shuffle traffic grows with the number of
+  *distinct* values, naive traffic grows with `n`, and raw data never leaves
+  its worker.
 
 ## Files
 
