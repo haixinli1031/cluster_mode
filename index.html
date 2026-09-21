@@ -35,6 +35,7 @@
           <button id="genSkew" type="button" class="tip" data-tip="Every value is a multiple of the worker count, so value mod k = 0 and worker 0 owns all of them. Shows an unbalanced shuffle in step 3.">Skewed</button>
           <button id="genTies" type="button" class="tip" data-tip="Several values repeat the same number of times, so the top count is tied. Shows the smallest-value-wins rule in steps 4 and 6.">Ties</button>
         </div>
+        <p id="sizeError" class="error" role="alert" hidden></p>
       </div>
       <div class="control">
         <label aria-hidden="true">&nbsp;</label>

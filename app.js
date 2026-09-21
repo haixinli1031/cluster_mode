@@ -28,7 +28,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var els = {
     kRange: $('kRange'), kOut: $('kOut'), dataInput: $('dataInput'), dataError: $('dataError'),
-    sizeInput: $('sizeInput'), dataCount: $('dataCount'), genRandom: $('genRandom'), genSkew: $('genSkew'), genTies: $('genTies'),
+    sizeInput: $('sizeInput'), sizeError: $('sizeError'), dataCount: $('dataCount'), genRandom: $('genRandom'), genSkew: $('genSkew'), genTies: $('genTies'),
     prevBtn: $('prevBtn'), nextBtn: $('nextBtn'), skipBtn: $('skipBtn'), phaseList: $('phaseList'),
     runBtn: $('runBtn'), bannerRun: $('bannerRun'), revertBtn: $('revertBtn'), staleBanner: $('staleBanner'), staleText: $('staleText'), layout: $('layout'),
     phaseTitle: $('phaseTitle'), phaseBlurb: $('phaseBlurb'), stage: $('stage'),
@@ -593,15 +593,27 @@
   }
   // From a button click, move focus to Run so the next step is obvious.
   function generateFromClick(gen) {
-    return function () { gen(); els.runBtn.focus(); };
+    return function () {
+      if (size() === null) { els.sizeInput.focus(); return; }
+      gen();
+      els.runBtn.focus();
+    };
   }
 
+  // The requested size, or null (with an inline error) when it is not an
+  // integer between 1 and MAX_N. Nothing is clamped silently.
   function size() {
-    var n = parseInt(els.sizeInput.value, 10);
-    if (!(n >= 1)) n = 1;
-    if (n > MAX_N) n = MAX_N;
-    els.sizeInput.value = n;
-    return n;
+    var raw = els.sizeInput.value.trim();
+    var n = /^\d+$/.test(raw) ? parseInt(raw, 10) : NaN;
+    var msg = '';
+    if (raw === '') msg = 'Enter how many values to generate.';
+    else if (isNaN(n)) msg = 'Size must be a whole number.';
+    else if (n < 1) msg = 'Size must be at least 1.';
+    else if (n > MAX_N) msg = 'Size is ' + fmtNum(n) + ' \u2014 the maximum is ' + fmtNum(MAX_N) + '.';
+    els.sizeError.textContent = msg;
+    els.sizeError.hidden = !msg;
+    els.sizeInput.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    return msg ? null : n;
   }
   function randint(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
 
@@ -609,19 +621,22 @@
   // 50 values, 1–99 up to 500, 1–999 beyond.
   function randomRange(n) { return n <= 50 ? 9 : n <= 500 ? 99 : 999; }
   function genRandom() {
-    var n = size(), hi = randomRange(n), out = [];
+    var n = size(); if (n === null) return;
+    var hi = randomRange(n), out = [];
     for (var i = 0; i < n; i++) out.push(randint(1, hi));
     setDraftData(out);
   }
   // Every value is a multiple of k, so value mod k = 0 and worker 0 owns all of them.
   function genSkew() {
-    var n = size(), out = [];
+    var n = size(); if (n === null) return;
+    var out = [];
     for (var i = 0; i < n; i++) out.push(draft.k * randint(1, 5));
     setDraftData(out);
   }
   // Several distinct values, each repeated the same number of times, shuffled.
   function genTies() {
-    var n = size(), reps = Math.min(n, Math.max(2, Math.min(4, Math.floor(n / 3))));
+    var n = size(); if (n === null) return;
+    var reps = Math.min(n, Math.max(2, Math.min(4, Math.floor(n / 3))));
     var distinct = Math.max(1, Math.floor(n / reps)), out = [];
     for (var v = 1; v <= distinct; v++) for (var r = 0; r < reps; r++) out.push(v);
     while (out.length < n) out.push(randint(distinct + 1, distinct + 9));
@@ -635,6 +650,7 @@
     updateStale();
   });
   els.dataInput.addEventListener('input', updateStale);
+  els.sizeInput.addEventListener('input', size);
   els.dataInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); }
   });
